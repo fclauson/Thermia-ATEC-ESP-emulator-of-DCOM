@@ -1,5 +1,21 @@
 # Thermia Gateway on an ESP32-S3: Flashing and Installation
 
+> ## ⚠️ WARNING: WORK IN PROGRESS – USE AT YOUR OWN RISK
+>
+> This project is still being developed and tested. I have it working on my own heat pump, but **that is no guarantee it will work on yours.** Your hardware, software versions or installation may be different.
+>
+> **Tested on:**
+>
+> | Item | Version |
+> |------|---------|
+> | Heat pump | Danfoss (now Thermia) ATEC |
+> | Heat pump software version | 2.2.0 |
+> | DCM (Thermia Online gateway) version | 2.0.15 |
+>
+> If your versions are different, it may not work, or it may behave differently.
+>
+> You are working on your own heating system. If something goes wrong, you are responsible for the result. Keep your original DCM so you can always put things back the way they were (see "Going back to the original gateway" at the end of this guide).
+
 This guide takes you from a brand-new Waveshare ESP32-S3-RS485-CAN board to one that is wired into the heat pump, running the gateway firmware, and showing up in Home Assistant. No previous ESP32 or electronics experience is assumed.
 
 It is in three parts:
