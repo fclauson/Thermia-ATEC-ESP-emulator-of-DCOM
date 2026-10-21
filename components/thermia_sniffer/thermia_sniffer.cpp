@@ -494,6 +494,11 @@ std::string ThermiaSniffer::shadow_status() const {
   return str_sprintf("MISMATCH x%u - %s", bugs, this->shadow_last_.c_str());
 }
 
+float ThermiaSniffer::seconds_since_hp_update() const {
+  if (!this->hp_update_seen_) return NAN;
+  return (float) (millis() - this->last_hp_update_ms_) / 1000.0f;
+}
+
 // Request a full resync: serve the resync mailbox pattern so the heat pump re-pushes its
 // settings table (1000-1777). Armed only.
 void ThermiaSniffer::request_full_resync() {
