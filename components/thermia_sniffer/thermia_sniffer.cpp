@@ -1,4 +1,4 @@
-// thermia_sniffer.cpp  v2026.10.20.2  ESP gateway-replacement component (impl)
+// thermia_sniffer.cpp  v2026.10.20.5  ESP gateway-replacement component (impl)
 #include <cmath>
 #include "thermia_sniffer.h"
 #include "registers_json_handler.h"
@@ -26,12 +26,9 @@ void ThermiaSniffer::setup() {
   }
   this->armed_ = false;
   this->boot_ms_ = millis();
-  if (this->web_base_ != nullptr) {
-    this->web_base_->init();
-    this->web_base_->add_handler(new RegistersJsonHandler(this));  // lives for the whole run
-    ESP_LOGI(TAG, "serving GET /registers.json (raw registers + live I/O, refreshed every %u s)",
-             (unsigned) (JSON_REFRESH_MS / 1000));
-  }
+  // The /registers.json web server is NOT started here: this component sets up before WiFi,
+  // and starting an HTTP server before the network stack exists aborts the ESP (boot loop,
+  // OTA rollback). It is started on the first loop() pass, after every component's setup().
   ESP_LOGW(TAG, "takeover: DISARMED at boot (capable=%s, auto=%s). Transmit is impossible until armed.",
            YESNO(this->takeover_capable_), YESNO(this->auto_takeover_));
   if (this->auto_takeover_)
@@ -81,9 +78,17 @@ void ThermiaSniffer::loop() {
   uint32_t now = micros();
   this->responder_.tick(millis());  // expire any resync / write-flag hold by wall clock
   this->auto_takeover_tick_();
-  if (this->web_base_ != nullptr &&
-      (this->json_built_ms_ == 0 || millis() - this->json_built_ms_ >= JSON_REFRESH_MS))
-    this->refresh_registers_json_();
+  if (this->web_base_ != nullptr) {
+    if (!this->web_started_) {  // first loop pass: all setup() done, network stack exists
+      this->web_started_ = true;
+      this->web_base_->init();
+      this->web_base_->add_handler(new RegistersJsonHandler(this));  // lives for the whole run
+      ESP_LOGI(TAG, "serving GET /registers.json (raw registers + live I/O, refreshed every %u s)",
+               (unsigned) (JSON_REFRESH_MS / 1000));
+    }
+    if (this->json_built_ms_ == 0 || millis() - this->json_built_ms_ >= JSON_REFRESH_MS)
+      this->refresh_registers_json_();
+  }
   while (this->available()) {
     if (this->read_byte(&b)) this->feed_byte_(b, now);
   }
@@ -310,7 +315,6 @@ void ThermiaSniffer::audit_(const uint8_t *d, size_t n) {
     if (n == 8) {
       this->a_r_req_++;
       this->a_rq_qty_ = (uint16_t) ((d[4] << 8) | d[5]);
-      this->responder_.note_read((uint16_t) ((d[2] << 8) | d[3]), (uint16_t) ((d[4] << 8) | d[5]));
     } else if (n >= 5 && n == (size_t) d[2] + 5) {
       gw_reply = true;
       if (this->a_rq_qty_ && d[2] == this->a_rq_qty_ * 2) {
@@ -503,57 +507,6 @@ void ThermiaSniffer::request_full_resync() {
   ESP_LOGW(TAG, "full resync REQUESTED: serving resync mailbox; heat pump should re-push 1000-1777");
 }
 
-// Mailbox probe: pulse one mailbox word to see which block the heat pump re-reads.
-void ThermiaSniffer::probe_mailbox(int idx, int value) {
-  if (!this->armed_) {
-    this->last_write_result_ = "probe refused: not armed";
-    ESP_LOGW(TAG, "mailbox probe refused: not armed");
-    return;
-  }
-  if (idx < 0 || idx > 5) {
-    this->last_write_result_ = "probe refused: idx must be 0..5 (1800..1805)";
-    return;
-  }
-  if (value < 0) value = 0;
-  if (value > 65535) value = 65535;
-  this->responder_.probe_once((uint16_t) idx, (uint16_t) value, 2);
-  this->last_write_result_ = str_sprintf("probe: reg %d = %d (pulse)", 1800 + idx, value);
-  ESP_LOGW(TAG, "mailbox PROBE: pulse reg %d = %d; a NEW block read will be logged, nothing if no mapping",
-           1800 + idx, value);
-}
-
-// Sweep 1801 over the powers of two: each bit selects one settings block. All 16 were
-// confirmed on 20 Oct 2026 (modbus-mailbox-flags.md); kept as a regression check.
-void ThermiaSniffer::sweep_1801() {
-  static const uint16_t IDXS[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
-  static const uint16_t VALS[] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768};
-  if (!this->armed_) {
-    this->last_write_result_ = "sweep refused: not armed";
-    ESP_LOGW(TAG, "sweep refused: not armed");
-    return;
-  }
-  this->responder_.sweep_load(IDXS, VALS, 16, 2, 3);
-  this->last_write_result_ = "sweep 1801 powers of two started";
-  ESP_LOGW(TAG, "mailbox SWEEP started: 1801 = 1,2,4,...,32768 (each bit = one block); NEW mappings logged");
-}
-
-float ThermiaSniffer::seconds_since_hp_update() const {
-  if (!this->hp_update_seen_) return NAN;
-  return (float) (millis() - this->last_hp_update_ms_) / 1000.0f;
-}
-
-std::string ThermiaSniffer::probe_status() const {
-  if (this->responder_.sweep_active()) {
-    const unsigned count = this->responder_.sweep_count();
-    const unsigned pos = std::min<unsigned>(this->responder_.sweep_pos() + 1, count);  // never "17/16"
-    return str_sprintf("sweep %u/%u (reg %u=%u)", pos, count, (unsigned) (1800 + this->responder_.probe_idx()),
-                       (unsigned) this->responder_.probe_value());
-  }
-  if (this->responder_.probe_active())
-    return str_sprintf("probing reg %u = %u", (unsigned) (1800 + this->responder_.probe_idx()),
-                       (unsigned) this->responder_.probe_value());
-  return "idle";
-}
 
 // Write one settings register (1000-1349 lower blocks) via its 1801 re-read flag.
 void ThermiaSniffer::set_writable_reg(uint16_t reg, float value, int lo, int hi, uint16_t flag_value,
@@ -755,52 +708,9 @@ void ThermiaSniffer::maybe_respond_(const uint8_t *d, size_t n) {
 
   this->send_frame_(reply.bytes, reply.len);
   if (reply.was_mailbox) this->mbx_served_++;
-  if (reply.was_mailbox) {
-    this->responder_.after_mailbox_sent();  // clear a one-poll write flag
-    this->drive_probe_();                    // advance a mailbox probe / sweep
-  }
+  if (reply.was_mailbox) this->responder_.after_mailbox_sent();  // advance a write-flag pulse
 }
 
-// Blocks with a confirmed mailbox flag: all 16 bits of 1801 (sweep, 20 Oct 2026) plus
-// 1800 bit 0 -> 1350. A probe hit on anything else is logged as a NEW mapping.
-static bool known_flag_block_(uint16_t start) {
-  static const uint16_t KNOWN[] = {1000, 1020, 1040, 1070, 1090, 1110, 1130, 1150, 1170,
-                                   1190, 1210, 1240, 1270, 1290, 1310, 1330, 1350};
-  for (uint16_t k : KNOWN)
-    if (k == start) return true;
-  return false;
-}
-
-// Called after each served mailbox read. Advances a single probe or an automated sweep and
-// logs the outcome: a known block quietly at INFO, an unknown one loudly as NEW.
-void ThermiaSniffer::drive_probe_() {
-  const bool sweeping = this->responder_.sweep_active();
-  const uint16_t idx = this->responder_.probe_idx();
-  const uint16_t val = this->responder_.probe_value();
-  int ev = sweeping ? this->responder_.sweep_after_mailbox_sent()
-                    : (this->responder_.probe_after_mailbox_sent() ? 1 : 0);
-  if (ev == 0) return;
-  if (ev == 2) {  // whole sweep finished
-    ESP_LOGW(TAG, "mailbox sweep: finished");
-    this->last_write_result_ = "sweep finished";
-    return;
-  }
-  // ev == 1: a probe step just ended. Report its hit, if any and if not already known.
-  const uint16_t hs = this->responder_.probe_hit_start();
-  const uint16_t hq = this->responder_.probe_hit_qty();
-  const bool known = known_flag_block_(hs);
-  if (hq > 0 && !known) {
-    ESP_LOGW(TAG, "mailbox probe HIT: reg %u = %u -> heat pump read block %u x%u  <<< NEW MAPPING",
-             (unsigned) (1800 + idx), (unsigned) val, (unsigned) hs, (unsigned) hq);
-    this->last_write_result_ = str_sprintf("HIT: %u=%u -> block %u x%u", (unsigned) (1800 + idx), (unsigned) val,
-                                           (unsigned) hs, (unsigned) hq);
-  } else if (hq > 0 && known) {
-    // a known mapping fired - useful as a sanity check, logged quietly at INFO
-    ESP_LOGI(TAG, "mailbox probe: reg %u = %u -> block %u x%u (already known)", (unsigned) (1800 + idx),
-             (unsigned) val, (unsigned) hs, (unsigned) hq);
-  }
-  // no hit -> say nothing (reduces noise for the many no-mapping values)
-}
 
 void ThermiaSniffer::send_frame_(const uint8_t *b, size_t len) {
   // Drive RS485 to transmit, write, wait for the UART to drain, release the driver.

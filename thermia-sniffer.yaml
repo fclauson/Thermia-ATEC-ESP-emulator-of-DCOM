@@ -335,31 +335,6 @@ number:
     set_action:
       - lambda: "id(hp_sniffer)->set_writable_reg_signed(1077, x, -20, -1, 8, \"heating_outd_stop\", thermia::Encoding::TWOS_COMPLEMENT);"
 
-  # --- Mailbox probe inputs (flag-probing plan). Pick which mailbox register and what value,
-  # then press "Run Mailbox Probe". These two just hold your choice; they don't transmit. ---
-  - platform: template
-    name: "Probe Mailbox Index (0=1800 .. 5=1805)"
-    id: probe_idx
-    device_id: dev_shadow
-    entity_category: config
-    min_value: 0
-    max_value: 5
-    step: 1
-    mode: box
-    optimistic: true
-    initial_value: 1
-  - platform: template
-    name: "Probe Mailbox Value"
-    id: probe_value
-    device_id: dev_shadow
-    entity_category: config
-    min_value: 0
-    max_value: 65535
-    step: 1
-    mode: box
-    optimistic: true
-    initial_value: 2
-
 # Enumeration settings as selects (options are the CSV labels). Same write path as number:.
 select:
   # Hot water on/off (reg 1059, block 1040-1060, 1801=4). Shows the real current value once
@@ -1303,16 +1278,9 @@ text_sensor:
     update_interval: 5s
     lambda: |-
       return id(hp_sniffer)->takeover_status();
+  # Outcome of the last write or resync request.
   - platform: template
-    name: "Mailbox Probe Status"
-    device_id: dev_shadow
-    entity_category: diagnostic
-    update_interval: 2s
-    lambda: |-
-      return id(hp_sniffer)->probe_status();
-  # Outcome of the last write, probe, sweep or resync request.
-  - platform: template
-    name: "Last Write or Probe Result"
+    name: "Last Write Result"
     device_id: dev_shadow
     entity_category: diagnostic
     update_interval: 5s
@@ -1391,24 +1359,6 @@ button:
     device_id: dev_shadow
     on_press:
       - lambda: "id(hp_sniffer)->request_full_resync();"
-  # Armed only: pulse the chosen mailbox word to the chosen value for two served mailbox
-  # reads. The block the heat pump re-reads is logged (NEW if not in the confirmed map).
-  # Changes no settings register. Mainly for mapping 1800 (W0) bits 1-15 if ever wanted.
-  - platform: template
-    name: "Run Mailbox Probe"
-    device_id: dev_shadow
-    on_press:
-      - lambda: |-
-          int idx = (int) id(probe_idx).state;
-          int val = (int) id(probe_value).state;
-          id(hp_sniffer)->probe_mailbox(idx, val);
-  # Automated sweep of 1801 over the powers of two 1..32768. All 16 bits were confirmed on
-  # 20 Oct 2026; kept as a regression check. Watch "Mailbox Probe Status".
-  - platform: template
-    name: "Run 1801 Sweep"
-    device_id: dev_shadow
-    on_press:
-      - lambda: "id(hp_sniffer)->sweep_1801();"
   # Every register whose value differs from what it was at the previous press
   # (reg: old->new). The first press after boot only records a baseline.
   - platform: template

@@ -1,4 +1,4 @@
-// gateway_responder.h  v2026.10.20.2  gateway reply builder, two-pulse writes, resync
+// gateway_responder.h  v2026.10.20.5  gateway reply builder, two-pulse writes, resync
 // Pure C++ (no ESPHome dependency) so it can be unit-tested on a PC.
 //
 // The ESP answers the heat pump AS the gateway. This header only BUILDS the exact reply
@@ -188,7 +188,6 @@ class GatewayResponder {
       resync_active_ = false;
       restore_quiescent_mailbox_();
     }
-    (void) now_ms;  // probe is poll-based (see probe_after_mailbox_sent), not time-based
     if (flag_has_deadline_ && (int32_t) (now_ms - flag_deadline_ms_) >= 0) {
       flag_has_deadline_ = false;
       pending_flag_polls_ = 0;
@@ -198,99 +197,6 @@ class GatewayResponder {
     }
   }
   bool resync_active() const { return resync_active_; }
-
-  // --- Mailbox flag probe (flag-probing plan) ---
-  // A flag is a PULSE, not a sustained value: the real gateway raises mailbox reg idx to a
-  // value, the heat pump reads it on its next poll and re-reads the flagged block, then the
-  // gateway clears it. So the probe pulses: it holds the value until `hold_polls` mailbox
-  // reads have actually been SERVED (so we know the heat pump saw it), then clears it. This
-  // is edge-accurate and immune to skipped polls (a skipped poll doesn't count down).
-  // Does NOT change any settings register.
-  //
-  // Single probe:
-  void probe_once(uint16_t idx, uint16_t value, uint16_t hold_polls = 2) {
-    if (idx >= MAILBOX_QTY) return;
-    store_[MAILBOX_START + idx] = value;
-    probe_idx_ = idx;
-    probe_value_ = value;
-    probe_polls_left_ = hold_polls;
-    probe_served_ = 0;
-    probe_active_ = true;
-    probe_hit_start_ = 0;
-    probe_hit_qty_ = 0;
-  }
-  void cancel_probe() {
-    if (probe_active_) { store_[MAILBOX_START + probe_idx_] = MAILBOX_QUIESCENT[probe_idx_]; probe_active_ = false; }
-    sweep_active_ = false;
-  }
-  bool probe_active() const { return probe_active_; }
-  uint16_t probe_idx() const { return probe_idx_; }
-  uint16_t probe_value() const { return probe_value_; }
-  uint16_t probe_served() const { return probe_served_; }  // mailbox reads served while raised
-  // If the heat pump read a non-mailbox block while this probe was raised, these hold it:
-  uint16_t probe_hit_start() const { return probe_hit_start_; }
-  uint16_t probe_hit_qty() const { return probe_hit_qty_; }
-
-  // Record a read the heat pump made (called by the component for every FC03 the HP sends).
-  // If we are probing and it's not the mailbox, remember it as this probe's "hit".
-  void note_read(uint16_t start, uint16_t qty) {
-    if (!probe_active_) return;
-    if (start == MAILBOX_START && qty == MAILBOX_QTY) return;  // the mailbox poll itself
-    probe_hit_start_ = start;
-    probe_hit_qty_ = qty;
-  }
-
-  // Called after a mailbox read is served, to count down the pulse and advance a sweep.
-  // Returns true if this call ENDED a probe step (so the component can log/advance).
-  bool probe_after_mailbox_sent() {
-    if (!probe_active_) return false;
-    probe_served_++;
-    if (probe_polls_left_ > 0 && --probe_polls_left_ == 0) {
-      store_[MAILBOX_START + probe_idx_] = MAILBOX_QUIESCENT[probe_idx_];  // clear the pulse
-      probe_active_ = false;
-      return true;
-    }
-    return false;
-  }
-
-  // --- Automated sweep: step through a list of (idx,value) probes on its own ---
-  // The component loads the list, then calls sweep_tick each loop. Between steps it waits
-  // settle_polls mailbox reads (quiescent) so one step's block re-read can't bleed into the
-  // next. Results are read per-step via probe_hit_* when a step ends.
-  void sweep_load(const uint16_t *idxs, const uint16_t *vals, uint16_t count, uint16_t hold_polls = 2,
-                  uint16_t settle_polls = 3) {
-    sweep_idxs_ = idxs; sweep_vals_ = vals; sweep_count_ = count;
-    sweep_hold_ = hold_polls; sweep_settle_ = settle_polls;
-    sweep_pos_ = 0; sweep_active_ = true; sweep_settle_left_ = 0;  // first probe raises on next poll
-  }
-  bool sweep_active() const { return sweep_active_; }
-  uint16_t sweep_pos() const { return sweep_pos_; }
-  uint16_t sweep_count() const { return sweep_count_; }
-  // Drive the sweep from a served-mailbox event. Returns 1 if a step just finished (read its
-  // probe_hit_*), 2 if the whole sweep just finished, 0 otherwise.
-  int sweep_after_mailbox_sent() {
-    if (!sweep_active_) return 0;
-    if (probe_active_) {
-      // A probe step is raised: count down its pulse on each served mailbox read.
-      if (probe_after_mailbox_sent()) {   // pulse just ended (value has been served hold times)
-        sweep_pos_++;
-        sweep_settle_left_ = sweep_settle_;  // wait a few quiescent polls before the next step
-        return 1;                            // tell the caller this step finished (read probe_hit_*)
-      }
-      return 0;
-    }
-    // No probe raised: we are settling between steps (or about to start the first).
-    if (sweep_settle_left_ > 0) {
-      sweep_settle_left_--;
-      return 0;
-    }
-    if (sweep_pos_ >= sweep_count_) {  // no steps left -> sweep done
-      sweep_active_ = false;
-      return 2;
-    }
-    probe_once(sweep_idxs_[sweep_pos_], sweep_vals_[sweep_pos_], sweep_hold_);  // raise next step
-    return 0;
-  }
 
   uint32_t handshakes_built() const { return hs_built_; }
   uint32_t acks_built() const { return acks_built_; }
@@ -405,14 +311,6 @@ class GatewayResponder {
   uint16_t pending_flag_repeats_{0};
   bool resync_active_{false};
   uint32_t resync_until_ms_{0};
-  bool probe_active_{false};
-  uint16_t probe_idx_{0}, probe_value_{0}, probe_polls_left_{0}, probe_served_{0};
-  uint16_t probe_hit_start_{0}, probe_hit_qty_{0};
-  // sweep
-  bool sweep_active_{false};
-  const uint16_t *sweep_idxs_{nullptr};
-  const uint16_t *sweep_vals_{nullptr};
-  uint16_t sweep_count_{0}, sweep_pos_{0}, sweep_hold_{2}, sweep_settle_{3}, sweep_settle_left_{0};
   bool flag_has_deadline_{false};
   uint32_t flag_deadline_ms_{0};
 };

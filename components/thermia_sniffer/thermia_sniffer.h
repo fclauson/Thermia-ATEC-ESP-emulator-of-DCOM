@@ -1,4 +1,4 @@
-// thermia_sniffer.h  v2026.10.20.2  ESP gateway-replacement component (header)
+// thermia_sniffer.h  v2026.10.20.5  ESP gateway-replacement component (header)
 #pragma once
 // Thermia / Danfoss DHP-AQ: ESP replacement for the Thermia Online gateway (0x0F).
 //
@@ -120,22 +120,13 @@ class ThermiaSniffer : public Component, public uart::UARTDevice {
   std::string takeover_status() const;
   uint32_t tx_frames_sent() const { return this->tx_sent_; }
 
-  // Text of the last write / probe / resync outcome, for the "Last Write or Probe Result" sensor.
+  // Text of the last write / resync outcome, for the "Last Write Result" sensor.
   std::string last_write_result() const { return this->last_write_result_; }
 
   // --- Full resync (armed only): serves the resync mailbox pattern so the heat pump re-pushes
   // its settings table (all of 1000-1777; NOT 1780-1798). See full-resync-trigger.md. This is
   // how the store is seeded when the ESP takes over without having watched a heat-pump boot. ---
   void request_full_resync();
-  // Mailbox flag probe (armed only; changes no settings register). Pulses mailbox word idx
-  // (0..5 = 1800..1805) to value for a couple of SERVED mailbox reads, then clears it. A block
-  // the heat pump re-reads in response is logged; one not in the confirmed map is flagged NEW.
-  // See mailbox-flag-probing-plan.md.
-  void probe_mailbox(int idx, int value);
-  void drive_probe_();  // internal: advance probe/sweep after each served mailbox read
-  // Automated sweep of 1801 over the powers of two 1..32768 (one block per bit).
-  void sweep_1801();
-  std::string probe_status() const;
   // Seconds since the heat pump last wrote any register to the gateway address (FC16).
   // Shows whether the heat pump is still actively talking to us. NAN if never seen.
   float seconds_since_hp_update() const;
@@ -221,6 +212,7 @@ class ThermiaSniffer : public Component, public uart::UARTDevice {
   static constexpr uint32_t JSON_LIVE_MAX_AGE_MS = 60000;  // live values older than this are left out
   void refresh_registers_json_();
   web_server_base::WebServerBase *web_base_{nullptr};
+  bool web_started_{false};  // web server started on the first loop() pass, never in setup()
   std::mutex json_mutex_;
   std::string json_cache_;
   uint32_t json_built_ms_{0};

@@ -190,14 +190,16 @@ Later session (Oct 2026) findings and fixes:
 **Optional / if wanted**
 4. 1070 (integral A1) writable: user to confirm; the NEG_MAGNITUDE encoding is ready.
 5. Curve offsets 1003-1005: signed path exists, confirm the encoding with one test write.
-6. 1800 (W0) sweep for bits 1-15 (calendar 1370-1768, clock 1770, 1777, 1780); quick wins:
+6. 1800 (W0) mapping for bits 1-15 (needs the probe tool back, see below) (calendar 1370-1768, clock 1770, 1777, 1780); quick wins:
    2151 firmware version and 1770-1776 clock as sensors (NOTE-missing-register-groups.md).
 7. Handshake revisit. Note: after an OTA flash (ESP-only reboot) the heat pump kept polling
     the ESP with no new handshake, so the limitation in §7 applies to long gaps, not reboots.
 8. Optional rename: "Gateway 0x0F Replying" means a REAL gateway is replying; "Real Gateway
     Detected" would be clearer (changes the entity id).
-9. Decide later whether to drop the bring-up diagnostics (gateway shadow, handshake check,
-    probe/sweep). Kept for now: they are only active with a real gateway or on demand.
+9. Bring-up diagnostics: the mailbox probe and 1801 sweep were REMOVED (21 Oct 2026; the
+    sweep's job is done). They are in thermia-gateway-2026-10-20d.tar.gz if ever needed again
+    (e.g. to map 1800 bits 1-15). Gateway shadow and handshake check are kept: they are only
+    active with a real gateway connected.
 
 **Done in the 20 Oct cleanup:** step-numbering and receive-only language removed from code
 and YAML; dedicated 1053 code path removed (uses the shared write path); duplicate sensor
@@ -225,7 +227,7 @@ of the HA activity log; obsolete relay placeholder removed from the YAML.
 - **ESPHome entity names must not contain `/`.** It is reserved as a URL path separator:
   ESPHome currently swaps it for a Unicode fraction slash with a warning, and from ESPHome
   2027.7.0 it will be a build error. Use "or", "and" or "-" instead (e.g. the text sensor
-  "Last Write or Probe Result").
+  "Last Write Result").
 
 ## 8. Safety model (why this is safe)
 

@@ -141,3 +141,12 @@ Consequences:
 - Cosmetic, for the code cleanup: Mailbox Probe Status briefly shows "sweep 17/16" at the end,
   and the "Hot Water Start (last write)" text sensor actually shows the last write OR probe
   result of any kind - rename it - DONE 20 Oct: "Last Write or Probe Result" (no "/" allowed in ESPHome names).
+
+---
+
+## UPDATE 21 Oct 2026 — probe and sweep tooling removed
+
+With all 16 bits of 1801 confirmed, the "Run Mailbox Probe" and "Run 1801 Sweep" buttons, the
+probe inputs, "Mailbox Probe Status", and the probe/sweep code in the component and responder
+were removed. The last build containing them is thermia-gateway-2026-10-20d.tar.gz. The full
+resync button and the Takeover Arm switch are unaffected.
