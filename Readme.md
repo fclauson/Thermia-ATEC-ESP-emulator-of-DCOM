@@ -255,8 +255,6 @@ The device will appear with its sensors grouped into sections (Heating & Curve, 
 
 # Part 2 – Wire it into the heat pump
 
-> ## 🔧 Revised Wiring 21st Oct 2026
-
 ## How it connects
 
 The ESP32 connects to **terminal block 121**, the room stat connection. It shares these terminals with the room stat ("doubles up"), taking both its 12 V power and its RS485 connection from the heat pump. No external power supply is needed, and the room stat stays connected and working as normal.
@@ -277,8 +275,8 @@ The ESP32 wires go into terminal 121 **alongside** the existing room stat wires.
 | 121.1 | +12 V supply | Stays connected | Power **+** (DC 7–36 V) |
 | 121.2 | — | Stays connected (if used) | Not connected |
 | 121.3 | RS485 A | Stays connected | RS485 **A+** |
-| 121.4 | GND | Stays connected | Power **−** (power-supply side) |
-| 121.5 | RS485 B | Stays connected | RS485 **B−** |
+| 121.4 | RS485 B | Stays connected | RS485 **B−** |
+| 121.5 | GND | Stays connected | Power **−** (power-supply side) |
 
 ## Wiring diagram
 
@@ -290,8 +288,8 @@ The ESP32 wires go into terminal 121 **alongside** the existing room stat wires.
  │ 121.1 +12V├──────────┴─┼─┼─┼─┼──────┤ PWR +   (7–36 V DC)      │
  │ 121.2     ├────────────┘ │ │ │      │                          │
  │ 121.3  A  ├──────────────┴─┼─┼──────┤ RS485 A+                 │
- │ 121.4 GND ├────────────────┴─┼──────┤ PWR −   (power side)     │
- │ 121.5  B  ├──────────────────┴──────┤ RS485 B−                 │
+ │ 121.4  B  ├────────────────┴─┼──────┤ RS485 B−                 │
+ │ 121.5 GND ├──────────────────┴──────┤ PWR −   (power side)     │
  └──────────┘                          │ RS485 GND → NOT CONNECTED│
                                        │ 120Ω jumper → NOT FITTED │
                                        └──────────────────────────┘
@@ -306,7 +304,7 @@ The ESP32 wires go into terminal 121 **alongside** the existing room stat wires.
 
 ### 2. Grounding
 
-- **121.4 (GND) goes to the power-side negative terminal only.**
+- **121.5 (GND) goes to the power-side negative terminal only.**
 - **Do not connect any ground to the RS485 side of the board.** The RS485 port is electrically isolated from the rest of the board on purpose. Connecting its ground would bypass that isolation and can create ground loops (a common cause of unreliable communication).
 - If you use shielded cable, connect the shield **at the heat pump end only**, or leave it unconnected. Never connect it at both ends.
 
@@ -325,7 +323,7 @@ Each terminal will hold two wires: the room stat's and the ESP's.
 3. **Isolate the heat pump** at the mains supply and confirm it is dead.
 4. **Disconnect the Thermia Online gateway (DCM)**, if it's still fitted. The ESP32 replaces it, so the two shouldn't be on the bus at the same time. Keep it somewhere safe in case you want to go back.
 5. **Photograph terminal 121** before touching it, so you have a record of the room stat wiring.
-6. **Check the 12 V supply (optional but recommended).** Briefly restore power and measure between 121.1 and 121.4. You should see about 12 V DC. **Isolate the heat pump again** before continuing.
+6. **Check the 12 V supply (optional but recommended).** Briefly restore power and measure between 121.1 and 121.5. You should see about 12 V DC. **Isolate the heat pump again** before continuing.
 7. **Wire the ESP32 into terminal 121** alongside the room stat wires, following the connection table.
    - Use one twisted pair for A and B.
    - Use the other pair for +12 V and GND.
@@ -393,7 +391,7 @@ After every update, check **Takeover Status** shows ARMED and **Seconds Since HP
 
 | Problem | What to try |
 |---------|-------------|
-| No red power LED | Check 121.1 → PWR+ and 121.4 → PWR−. Measure 12 V at the board's power terminals. |
+| No red power LED | Check 121.1 → PWR+ and 121.5 → PWR−. Measure 12 V at the board's power terminals. |
 | Power OK, but the blue RS485 LED never flashes | Check the A/B wiring. Try swapping A and B: different manufacturers label them differently. |
 | Blue LED flashes but no data / CRC errors in the log | Confirm the 120 Ω jumper is **not** fitted. Check the A/B pair is twisted together and routed away from mains cables. |
 | Room stat stops working or shows an error | Check the room stat wires are still clamped in terminal 121. Confirm the 120 Ω jumper is **not** fitted. Disconnect the ESP to see whether it's the cause. |
