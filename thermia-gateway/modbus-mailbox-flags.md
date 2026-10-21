@@ -12,6 +12,47 @@
 
 ---
 
+## UPDATE 20 Oct 2026 — W1 (1801) CONFIRMED on our bus, all 16 bits
+
+Powers-of-two sweep run from the ESP as sole gateway (06:29:55–06:36:41, after a full resync
+seeded the store). Every bit made the heat pump FC03-read exactly the predicted block, at the
+**wire** length, and the ESP served each block unchanged from its store:
+
+| 1801 value | Bit | Block read | Length | Result |
+|---:|---:|---|---:|---|
+| 1 | 0 | 1000 | 13 | known, re-confirmed |
+| 2 | 1 | 1020 | 11 | **NEW, confirmed** |
+| 4 | 2 | 1040 | 21 | known, re-confirmed |
+| 8 | 3 | 1070 | 15 | **NEW, confirmed** (Heat Pump Control) |
+| 16 | 4 | 1090 | 13 | **NEW, confirmed** (Cooling) |
+| 32 | 5 | 1110 | 12 | **NEW, confirmed** (Immersion) |
+| 64 | 6 | 1130 | 18 | **NEW, confirmed** (Calibration) |
+| 128 | 7 | 1150 | 19 | **NEW, confirmed** |
+| 256 | 8 | 1170 | 9 | **NEW, confirmed** |
+| 512 | 9 | 1190 | 13 | **NEW, confirmed** |
+| 1024 | 10 | 1210 | 22 | **NEW, confirmed** |
+| 2048 | 11 | 1240 | 27 | **NEW, confirmed** |
+| 4096 | 12 | 1270 | 14 | **NEW, confirmed** |
+| 8192 | 13 | 1290 | 19 | **NEW, confirmed** |
+| 16384 | 14 | 1310 | 9 | **NEW, confirmed** |
+| 32768 | 15 | 1330 | 18 | **NEW, confirmed** |
+
+Health throughout: Active Alarm Bits = None on every update, Gateway Shadow Mismatches 0,
+Mailbox Reads Dropped 0, Seconds Since HP Update 0–2 s, bad frames 2. One harmless
+"took 70 ms" component warning (the known large-reply TX time).
+
+So W1 is a per-block bitmask exactly as the CM930 file describes, and **every lower settings
+block 1000–1349 now has a proven delivery flag**. W1 alone is enough on our bus (no W3 bit
+needed). W0 (1800) is still only confirmed for bit 0 (1350); bits 1–15 are predicted.
+
+Also confirmed 20 Oct (resync log): a full resync (1802/1803/1804/1805 = 7FFF/FFFF/0080/0007)
+makes the heat pump push 31 settings blocks — all 16 W1 blocks and W0 blocks 0546…06F1 — but
+**not 06F4 (1780–1798, W0 bit 15)**, matching 1802 = 0x7FFF leaving bit 15 clear. The ESP
+therefore never holds 1780–1798 after a resync-seeded start. During the resync hold the heat
+pump also pushes 085F (2143–2147) on every poll, matching 1804 = 0x0080 (W4 bit 7).
+
+---
+
 ## 1. The model in one paragraph
 
 Each mailbox word is a **16-bit field where each bit stands for one block of registers**. The HP polls 1800–1805 every ~4.2 s, then acts on whichever bits are set:
@@ -151,6 +192,7 @@ Runtime gaps: 07E3, 07F5–07F7, 0809–080B, 081E–081F, 0832–0833, 0846–0
 
 ## 7. Status labels used
 
-- **PROVEN on our bus:** §3 items 1, 2, 3, 5 and the W4/W5 steady-state values.
+- **PROVEN on our bus:** §3 items 1, 2, 3, 5, the W4/W5 steady-state values, **all 16 W1 bits
+  (sweep, 20 Oct 2026)**, W0 bit 0, and the resync skipping 06F4.
 - **Firmware-derived (CM930), consistent with our bus:** the bit layouts in §2 and the W0–W4 role names.
 - **Inferred / to test:** W2/W3 meaning "HP uploads the block"; the reconnect-signature decode (§3 item 4); W5 meaning; HP-pushes-on-change (§6 item 3); selective resync.
