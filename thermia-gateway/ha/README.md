@@ -9,8 +9,8 @@ stay fixed.
 | Part | Where it runs | File |
 |---|---|---|
 | JSON endpoint | ESP (built into the component) | `registers_json.h`, `registers_json_handler.h` |
-| Collector | Home Assistant machine, every 5 min | `ha/thermia_collector.py` |
-| Report | Your PC | `ha/thermia_report.py` |
+| Collector | Home Assistant machine, every 5 min | `thermia_collector.py` (this folder) |
+| Report | Your PC | `thermia_report.py` (this folder) |
 
 All Python is standard library only, so there is nothing to install.
 
@@ -41,7 +41,7 @@ changed the request API (`url()`). Send me the error and I'll adjust it.
 
 ## 2. Home Assistant: the collector
 
-1. Copy `ha/thermia_collector.py` to `/config/thermia_collector/thermia_collector.py`. The
+1. Copy `thermia_collector.py` (from this folder) to `/config/thermia_collector/thermia_collector.py`. The
    Samba share or the File editor add-on both work.
 2. Add this to `configuration.yaml`, replacing the IP address with your ESP's:
 

@@ -354,7 +354,7 @@ Give it a minute or two after power-up, then check these entities in Home Assist
 | Temperature sensors | Real values appearing within about 30 seconds |
 | Settings (heating curve, hot water etc.) | Filled in shortly after the ESP arms |
 
-**Optional extra check:** in a browser, go to `http://<the ESP's IP address>/registers.json`. You should see a page of numbers starting with `{"uptime_s":`. This is a read-only list of everything the ESP has received from the heat pump. Nothing on that page can change any settings. (It's used by the optional register logger: see [`Documentation/README-register-logging.md`](Documentation/README-register-logging.md).)
+**Optional extra check:** in a browser, go to `http://<the ESP's IP address>/registers.json`. You should see a page of numbers starting with `{"uptime_s":`. This is a read-only list of everything the ESP has received from the heat pump. Nothing on that page can change any settings. (It's used by the optional register logger: see [`ha/README.md`](ha/README.md).)
 
 Leave it running for a few days and glance at **Seconds Since HP Update** and **Mailbox Reads Dropped** now and then.
 

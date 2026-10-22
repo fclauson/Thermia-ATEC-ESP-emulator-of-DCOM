@@ -122,7 +122,7 @@ main() and would be compiled into the firmware):
 - `step3-profile-and-mailbox.md` — profile determination + mailbox semantics.
 - `full-resync-trigger.md` — the full-table resync mechanism.
 - `NOTE-writable-registers-todo.md` — queued work: more writable registers + flag probing.
-- `README-register-logging.md` — GET /registers.json on the ESP, the 5-minute collector on
+- `ha/README.md` (was README-register-logging.md) — GET /registers.json on the ESP, the 5-minute collector on
   Home Assistant (`ha/thermia_collector.py`) and the change report (`ha/thermia_report.py`).
 - `NOTE-missing-register-groups.md` — the 8 Thermia Online groups not in the CSV (not needed),
   what is known about each, and how to get their definitions if ever wanted.
@@ -181,7 +181,7 @@ Later session (Oct 2026) findings and fixes:
    - 2120 integral: compressor should start near -60 (1070) and aux heat near -600 (1111).
 
 **Another day**
-3. **Unmapped registers:** use the register logger (README-register-logging.md): let it
+3. **Unmapped registers:** use the register logger (ha/README.md): let it
    run through heating runs and defrosts, then `thermia_report.py --names ... --only-unmapped`
    shows which unknowns change ("Dump Unmapped Registers" gives a one-off list). Candidates:
    2161/2164/2165/2169/2170 (gaps between the hour counters), 2151 firmware version,
