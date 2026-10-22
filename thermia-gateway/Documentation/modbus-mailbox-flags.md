@@ -51,13 +51,6 @@ makes the heat pump push 31 settings blocks — all 16 W1 blocks and W0 blocks 0
 therefore never holds 1780–1798 after a resync-seeded start. During the resync hold the heat
 pump also pushes 085F (2143–2147) on every poll, matching 1804 = 0x0080 (W4 bit 7).
 
-**Our ESP's use of the request words (22 Oct 2026):** the ESP sets 1802/1803 (upload requests)
-ONLY during a full resync (0 0 7FFF FFFF 0080 0007, 35 s). Settings writes raise 1800/1801
-bits only. From 22 Oct the component logs every non-steady mailbox reply and classes every
-settings push from the heat pump as requested / UNSOLICITED (README-build-and-run.md, event log
-lines), to settle whether the heat pump ever pushes on its own (e.g. the 06F4 block at
-test-mode entry on 21 Oct).
-
 ---
 
 ## 1. The model in one paragraph

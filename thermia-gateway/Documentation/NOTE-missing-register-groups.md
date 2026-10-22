@@ -59,8 +59,8 @@ get the full definitions if they are ever wanted.
 
 4. **Calendar specifically.** The calendar blocks can be confirmed with the mailbox probe
    on **1800** (W0) using powers of two: bit 1 = value 2 → 1370, bit 2 = value 4 → 1403,
-   and so on. Follow the same seed → probe → observe discipline as
-   mailbox-flag-probing-plan.md. Contents are then decoded by changing a schedule on the HP
+   and so on. Follow the same seed → probe → observe discipline used
+   for the 1801 sweep (see modbus-mailbox-flags.md). Contents are then decoded by changing a schedule on the HP
    display and diffing.
 
 ## Quick wins (if ever wanted)

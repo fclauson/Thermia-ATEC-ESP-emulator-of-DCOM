@@ -173,67 +173,33 @@ Later session (Oct 2026) findings and fixes:
 **To do**
 1. **Soak (underway):** several days fully local. Watch ESP restarts, the `bad=` frame count
    trend (2 during the sweep), and that "Seconds Since HP Update" stays low.
-2. **DONE — circulating pump decode (22 Oct 2026).** There is ONE circulating pump. A80C bit 5
-   is a heating-mode output (clear in Hot Water mode while the pump runs), now named "Heating
-   Circuit Output (A80C bit 5)". "Circulating Pump" = speed A80F > 10 % AND Flow Detected.
-3. **ACTION — cold-weather checks (mostly answered 22 Oct)** (needs the first cold spell and defrosts):
-   - DONE: defrost registers, SEEN at three defrosts 21-22 Oct 2026 (2171 3122 -> 3125).
-     2173 = compressor run minutes since the last defrost (resets at each defrost, rises only
-     with the compressor); 2172 = that count captured at the defrost (18417, then 160).
-     Renamed in the YAML. One small check left: 2173 read ~160 just before the 22 Oct reset;
-   - ODU values: 2092-2095 never change on this unit (decodes marked "unverified, does not
-     change", bit decodes disabled by default). Working replacements: "Defrost Active" (2149
-     bits 4/5), "ODU Run Mode" (ABF4: 4/5/6/78), "ODU State Code" (2083: 0/2/5/6). Still open:
-     which registers carry the real four-way valve, fan feedback and flow status;
+2. **ACTION — cold-weather checks (outstanding)** (needs the first cold spell and defrosts):
+   - defrost units: 2172 minutes between the last two defrosts; 2173 compressor run minutes
+     since the last defrost (should rise ~1/min only with the compressor, reset at a defrost);
+   - ODU values (2091-2096, 2095 bits): fans, valve and defrost bit should follow real behaviour;
    - Pumps & Valves decodes (system enable, test mode still unconfirmed);
    - 2120 integral: compressor should start near -60 (1070) and aux heat near -600 (1111).
 
 **Another day**
-4. **Unmapped registers:** use the register logger (README-register-logging.md): let it
+3. **Unmapped registers:** use the register logger (README-register-logging.md): let it
    run through heating runs and defrosts, then `thermia_report.py --names ... --only-unmapped`
    shows which unknowns change ("Dump Unmapped Registers" gives a one-off list). Candidates:
    2161/2164/2165/2169/2170 (gaps between the hour counters), 2151 firmware version,
    2180-2239 (unknown live block). Add useful ones to the YAML (unknowns as diagnostic).
 
 **Optional / if wanted**
-5. 1070 (integral A1) writable: user to confirm; the NEG_MAGNITUDE encoding is ready.
-6. Curve offsets 1003-1005: signed path exists, confirm the encoding with one test write.
-7. 1800 (W0) mapping for bits 1-15 (needs the probe tool back, see below) (calendar 1370-1768, clock 1770, 1777, 1780); quick wins:
+4. 1070 (integral A1) writable: user to confirm; the NEG_MAGNITUDE encoding is ready.
+5. Curve offsets 1003-1005: signed path exists, confirm the encoding with one test write.
+6. 1800 (W0) mapping for bits 1-15 (needs the probe tool back, see below) (calendar 1370-1768, clock 1770, 1777, 1780); quick wins:
    2151 firmware version and 1770-1776 clock as sensors (NOTE-missing-register-groups.md).
-8. Handshake revisit. Note: after an OTA flash (ESP-only reboot) the heat pump kept polling
+7. Handshake revisit. Note: after an OTA flash (ESP-only reboot) the heat pump kept polling
     the ESP with no new handshake, so the limitation in §7 applies to long gaps, not reboots.
-9. Optional rename: "Gateway 0x0F Replying" means a REAL gateway is replying; "Real Gateway
+8. Optional rename: "Gateway 0x0F Replying" means a REAL gateway is replying; "Real Gateway
     Detected" would be clearer (changes the entity id).
-10. Bring-up diagnostics: the mailbox probe and 1801 sweep were REMOVED (21 Oct 2026; the
+9. Bring-up diagnostics: the mailbox probe and 1801 sweep were REMOVED (21 Oct 2026; the
     sweep's job is done). They are in thermia-gateway-2026-10-20d.tar.gz if ever needed again
     (e.g. to map 1800 bits 1-15). Gateway shadow and handshake check are kept: they are only
     active with a real gateway connected.
-
-**22 Oct 2026, revision 3 of yaml-update-list.md + component logging (§7):** new derived
-sensors ODU Run Mode, ODU State Code, Defrost Active, Unit Running, Last Defrost Duration;
-pump fix (above); 2032/2034/2083/2090/2091/2096/2150 renames; 2149/2150 bits confirmed. The
-component now logs (tag thermia_events) non-steady mailbox replies, every settings push as
-requested / UNSOLICITED with a push summary, the full 06F4 block, and DEFROST START / END /
-RESULT; and serves a 256-entry event buffer in /registers.json, written by the collector as
-exact-time "event" rows (README-build-and-run.md, README-register-logging.md). New file
-bus_events.h (13 component files). Open items from the note: A1 (are 06F4 updates in test mode
-unsolicited? the new push lines will show), 1786 scale, the other test outputs in 1781-1798,
-A80C bit 5 in test mode, other ODU run-mode / state values, what 2096 captures, where the real
-four-way valve / fan / flow status live, 1762 / 1763.
-
-**Register updates 22 Oct 2026** (yaml-update-list.md revision 2): 2172/2173 renamed to
-"Compressor Minutes Between Last 2 Defrosts" / "Compressor Minutes Since Last Defrost";
-2091 renamed "Reg 2091 (defrost-related flag?, unconfirmed)" and moved to Mailbox & Raw;
-"(unverified)" added to 2092, 2093, 2095 and all 13 binary sensors decoded from 2094/2095;
-shared comment on 2082/2089/2090 (switch together, not compressor on/off). The report gained
-a signed "slast" column and an explicit data-period header.
-
-**Register additions 21 Oct 2026** (from the collector analysis, yaml-update-list.md):
-HP runtime clock 2136-2142 (2136 was "Post Box", now "HP Clock Second") plus an "HP Clock
-(runtime)" text sensor; 2018 (A811 copy); test-mode mirrors 1780/1783/1786 from the 1780-1798
-block, which only appears in a full settings push (seen at test-mode entry, never in a
-resync); renames and comments for 2034/2036 and notes for 2013/2016/2024/2029/2032/2172/2173.
-The live-I/O section header now maps runtime 2000-2039 to the internal bus addresses.
 
 **Renamed 21 Oct 2026:** the component was called `thermia_sniffer` from its listen-only
 beginnings; it now runs the whole conversation with the heat pump, so it is `thermia_gateway`

@@ -25,7 +25,7 @@
 > YAML (Heating Curve, Curve Min/Max, Heat Stop, Room Factor; Hot Water Time, Hot Water Top
 > Heating Time), using a generic `set_writable_reg()` that reuses the proven 1053 path.
 > Curve fine-tune points 1003/1004/1005 (-5..+5) were left out pending signed-value handling.
-> Group 3 (calibration) still needs its mailbox flag mapped — see mailbox-flag-probing-plan.md.
+> Group 3 (calibration) still needs its mailbox flag mapped — since done: see modbus-mailbox-flags.md (UPDATE 20 Oct 2026).
 
 **Raised:** 18 October 2026, by the user, after step 4a was built.
 **Status:** NOT YET IMPLEMENTED. This is a to-do for a step after 4a/4b, once writing a

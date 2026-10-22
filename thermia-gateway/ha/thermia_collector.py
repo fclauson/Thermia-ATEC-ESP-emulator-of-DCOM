@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""thermia_collector.py  v2026.10.22.1  - log ESP register values over time, SD-card friendly.
+"""thermia_collector.py  v2026.10.20.3  - log ESP register values over time, SD-card friendly.
 
 Runs on the Home Assistant machine, started every 5 minutes by a shell_command (see
 README-register-logging.md). Python standard library only.
@@ -20,14 +20,7 @@ Storage (designed for an SD card):
 Line format (one JSON object per line):
   {"t": 1729400000, "type": "snapshot", "uptime_s": 123, "v": {"1000": 22, "dev02.w.10": 5, ...}}
   {"t": 1729400300, "type": "delta", "v": {"2120": 65485}}
-  {"t": 1729400600, "type": "delta", "restart": true, "uptime_s": 12, "v": {...}}  <- ESP rebooted
-  {"t": 1729400412, "type": "event", "seq": 57, "k": "2149", "val": 16}
-
-Events: the ESP keeps the last 256 changes of a watchlist (defrost, run mode, test-mode block
-1780-1798, ...) with their exact ESP uptime, in /registers.json. Each run writes the ones not
-yet written as "event" rows timed to within ~10 s (the ESP rebuilds the JSON every 10 s), so
-short events between two 5-minute samples are not lost. If more than 256 happened since the
-last run, an "event_gap" row says how many were missed.
+  {"t": 1729400600, "type": "delta", "restart": true, "v": {...}}   <- ESP uptime went down
 
 A key missing from a fetch (e.g. just after an ESP reboot, or a live value gone stale) is NOT
 recorded as a change; it keeps its last value until it is seen again.
@@ -66,28 +59,7 @@ def fetch(url, timeout):
         data = json.loads(r.read().decode("utf-8"))
     values = {str(k): int(v) for k, v in data.get("reg", {}).items()}
     values.update({str(k): int(v) for k, v in data.get("live", {}).items()})
-    return values, int(data.get("uptime_s", 0)), data
-
-
-def event_lines(data, fetched_at, last_seq):
-    """New event rows since last_seq, timed from the ESP uptime. Returns (lines, new_last_seq)."""
-    ev = data.get("events")
-    if not isinstance(ev, dict):
-        return [], last_seq                      # older firmware: no events
-    up_ms = int(data.get("uptime_ms", 0))
-    lines, newest = [], last_seq
-    items = [e for e in ev.get("list", []) if isinstance(e, list) and len(e) == 4]
-    if items and last_seq and items[0][0] > last_seq + 1:
-        lines.append(json.dumps({"t": int(fetched_at), "type": "event_gap", "missed": items[0][0] - last_seq - 1},
-                                separators=(",", ":")) + "\n")
-    for seq, ms, key, val in items:
-        if seq <= last_seq:
-            continue
-        t = round(fetched_at - (up_ms - ms) / 1000.0, 1)
-        lines.append(json.dumps({"t": t, "type": "event", "seq": seq, "k": str(key), "val": int(val)},
-                                separators=(",", ":")) + "\n")
-        newest = max(newest, seq)
-    return lines, newest
+    return values, int(data.get("uptime_s", 0))
 
 
 def read_day_file(path):
@@ -196,7 +168,7 @@ def main():
     today_file = day_path(a.log_dir, today)
 
     try:
-        current, uptime, data = fetch(a.url, a.timeout)
+        current, uptime = fetch(a.url, a.timeout)
     except Exception as e:  # noqa: BLE001 - any failure: skip this run quietly
         log(f"fetch failed: {e}")
         return
@@ -205,22 +177,6 @@ def main():
         return
 
     state = load_json(state_path, None)
-    restarted_now = bool(state) and state.get("uptime_s") is not None and uptime < state["uptime_s"]
-    ev_lines, ev_seq = event_lines(data, now, 0 if (not state or restarted_now) else state.get("event_seq", 0))
-
-    def queue(lines):
-        """Buffer lines in RAM (or write them now if not buffering)."""
-        if not lines:
-            return
-        if a.flush_minutes <= 0:
-            by_day = {}
-            for line in lines:
-                by_day.setdefault(day_of(json.loads(line)["t"]), []).append(line)
-            for day, day_lines in sorted(by_day.items()):
-                append_lines(day_path(a.log_dir, day), day_lines)
-        else:
-            with open(os.path.join(a.state_dir, PENDING_FILE), "a", encoding="utf-8") as f:
-                f.write("".join(lines))
 
     # New day (or first ever run): flush what belongs to earlier days, then a full snapshot.
     if not os.path.exists(today_file):
@@ -231,8 +187,7 @@ def main():
         append_lines(today_file, [json.dumps({"t": ts, "type": "snapshot", "uptime_s": uptime, "v": merged},
                                              separators=(",", ":")) + "\n"])
         prune(a.log_dir, a.retention_days, today)
-        queue(ev_lines)
-        save_json(state_path, {"values": merged, "uptime_s": uptime, "last_flush": ts, "event_seq": ev_seq})
+        save_json(state_path, {"values": merged, "uptime_s": uptime, "last_flush": ts})
         return
 
     # RAM state lost (HA restart): rebuild from today's file (snapshot + flushed deltas).
@@ -242,24 +197,24 @@ def main():
             os.replace(today_file, today_file + ".damaged")
             append_lines(today_file, [json.dumps({"t": ts, "type": "snapshot", "uptime_s": uptime,
                                                   "v": {**values, **current}}, separators=(",", ":")) + "\n"])
-            queue(ev_lines)
-            save_json(state_path, {"values": {**values, **current}, "uptime_s": uptime, "last_flush": ts,
-                                   "event_seq": ev_seq})
+            save_json(state_path, {"values": {**values, **current}, "uptime_s": uptime, "last_flush": ts})
             return
-        state = {"values": values, "uptime_s": up, "last_flush": ts, "event_seq": ev_seq}
+        state = {"values": values, "uptime_s": up, "last_flush": ts}
 
     last = state["values"]
     changed = {k: v for k, v in current.items() if last.get(k) != v}
     restarted = state.get("uptime_s") is not None and uptime < state["uptime_s"]
 
-    lines = list(ev_lines)
     if changed or restarted:
-        rec = {"t": ts, "type": "delta", "uptime_s": uptime, "v": changed}
+        rec = {"t": ts, "type": "delta", "v": changed}
         if restarted:
             rec["restart"] = True
-        lines.append(json.dumps(rec, separators=(",", ":")) + "\n")
+        if a.flush_minutes <= 0:
+            append_lines(today_file, [json.dumps(rec, separators=(",", ":")) + "\n"])
+        else:
+            with open(os.path.join(a.state_dir, PENDING_FILE), "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, separators=(",", ":")) + "\n")
         last.update(changed)
-    queue(lines)
 
     if a.flush_minutes > 0 and ts - state.get("last_flush", ts) >= a.flush_minutes * 60:
         flush_pending(a.state_dir, a.log_dir)
@@ -267,7 +222,6 @@ def main():
 
     state["values"] = last
     state["uptime_s"] = uptime
-    state["event_seq"] = ev_seq
     save_json(state_path, state)
 
 
