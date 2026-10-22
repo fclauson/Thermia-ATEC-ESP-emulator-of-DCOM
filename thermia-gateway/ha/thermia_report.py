@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""thermia_report.py  v2026.10.20.3  - which registers changed, and which stayed fixed.
+"""thermia_report.py  v2026.10.22.1  - which registers changed, and which stayed fixed.
 
 Run on your PC over the daily files written by thermia_collector.py (copy the folder
 /config/thermia_log from Home Assistant, e.g. via the Samba share). Python 3.8+, standard
@@ -12,10 +12,16 @@ library only.
 For every key (registers as "1000", live I/O as "dev02.w.10") it reports:
   changes   number of times the value changed (0 = fixed over the whole period)
   distinct  number of different values seen
-  min/max   raw unsigned 16-bit, and as signed int16
-  first, last, last change time
+  min/max   raw unsigned 16-bit, and as signed int16 (smin/smax)
+  last      raw, and as signed int16 (slast)
+  first value, time of the last change
 
 "Changed" registers are listed first (most changes first), then "fixed" ones with their value.
+
+Sampling: the collector reads the ESP every 5 minutes, so a value that changes and changes
+back between two reads (e.g. a 25 s test-mode step) is not seen, and "changes" counts changes
+between samples, not every change on the bus. For short events use the ESP's log_changes
+output (ESPHome log, DEBUG) instead.
 """
 
 import argparse
@@ -86,10 +92,13 @@ def main():
     stats = {}
     t_first = t_last = None
     snapshots = restarts = deltas = 0
+    days = set()
     for rec in read_records(a.log_dir, a.since):
         t = rec.get("t", 0)
         t_first = t if t_first is None else t_first
         t_last = t
+        if t:
+            days.add(fmt_t(t)[:10])
         if rec.get("type") == "snapshot":
             snapshots += 1
         else:
@@ -116,20 +125,24 @@ def main():
     changed = sorted([k for k in keys if stats[k]["changes"] > 0], key=lambda k: (-stats[k]["changes"], key_sort(k)))
     fixed = [k for k in keys if stats[k]["changes"] == 0]
 
-    print(f"Period: {fmt_t(t_first)} .. {fmt_t(t_last)}   records: {snapshots} snapshot(s), {deltas} delta(s), "
-          f"ESP restarts: {restarts}")
-    print(f"Keys: {len(keys)} reported - {len(changed)} changed, {len(fixed)} fixed\n")
+    hours = (t_last - t_first) / 3600 if t_first and t_last else 0
+    print(f"Data from {fmt_t(t_first)} to {fmt_t(t_last)}  ({hours:.1f} h, {len(days)} calendar day(s))")
+    print(f"Records: {snapshots} snapshot(s), {deltas} delta(s), ESP restarts: {restarts}")
+    print(f"Keys: {len(keys)} reported - {len(changed)} changed, {len(fixed)} fixed")
+    print("Note: values are sampled every 5 min; changes that revert between samples are not seen,")
+    print("      so 'changes' can undercount (use the ESP log_changes output for short events).\n")
 
     def name_of(k):
         return names.get(k, "") if k.isdigit() else "(live I/O)"
 
-    hdr = f"{'key':<14}{'changes':>8}{'distinct':>9}{'min':>7}{'max':>7}{'smin':>8}{'smax':>7}{'last':>7}  {'last change':<17} name"
+    hdr = (f"{'key':<14}{'changes':>8}{'distinct':>9}{'min':>7}{'max':>7}{'smin':>8}{'smax':>7}{'last':>7}"
+           f"{'slast':>8}  {'last change':<17} name")
     print("CHANGED")
     print(hdr)
     for k in changed:
         s = stats[k]
         print(f"{k:<14}{s['changes']:>8}{len(s['values']):>9}{s['min']:>7}{s['max']:>7}{s['smin']:>8}{s['smax']:>7}"
-              f"{s['last']:>7}  {fmt_t(s['last_change']):<17} {name_of(k)}")
+              f"{s['last']:>7}{s16(s['last']):>8}  {fmt_t(s['last_change']):<17} {name_of(k)}")
     print("\nFIXED (never changed)")
     print(f"{'key':<14}{'raw':>7}{'signed':>8}  name")
     for k in fixed:
