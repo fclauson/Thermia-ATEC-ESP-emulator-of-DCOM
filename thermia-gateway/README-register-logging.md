@@ -29,8 +29,12 @@ After flashing, open `http://<esp-ip>/registers.json` in a browser. You should s
 - **`live`:** the FC23 live I/O values, keyed `dev<device hex>.<w|r>.<address>`. `w` means the
   heat pump wrote the value to that device; `r` means the device replied with it. Only values
   updated in the last 60 s are included, so a device that stops talking drops out.
-- **Refresh:** the JSON is rebuilt in the main loop every 30 s. The web server only copies that
-  text and never reads the live data directly, so a request can't disturb the bus handling.
+- **Thread safety:** the JSON is rebuilt in the main loop. The web server only copies that text
+  and never reads the live data directly, so a request can't disturb the bus handling.
+- **`events`** (since 22 Oct 2026): the last 256 changes of a watchlist (defrost and run-mode
+  registers, test-mode block 1780-1798, ...), each with its ESP uptime in ms, plus the JSON's
+  own `uptime_ms`. The collector turns them into exact-time `event` rows.
+- **Refresh:** every 10 s (it was 30 s before 22 Oct).
 - **Read-only:** the endpoint can't change anything.
 
 The component auto-loads ESPHome's `web_server_base`, so port 80 is open on the ESP. Only
@@ -125,6 +129,13 @@ python thermia_report.py thermia_log/ --since 2026-11-01
 - **`--names`:** labels registers from the YAML, so unmapped ones (blank name) stand out.
   `--only-unmapped` hides the mapped ones.
 - **`--csv`:** writes the full table for a spreadsheet.
+- **Sampling limit:** values are read every 5 minutes, so a change that reverts between two
+  reads is not in the CHANGED table, and "changes" can undercount. The **EVENTS** section fills
+  that gap for the watchlist (exact times, to within ~10 s); `--events` prints every event in
+  time order.
+- **Checks:** the header shows the exact data period and the ESP uptime. dev4 reads that only
+  ever show 64536 (-1000, sensor not fitted) are listed separately. Each day file is checked to
+  contain that day's data, and identical day files are flagged.
 
 **Tip for the ODU question:** run the report over a period that includes heating runs and
 (once it's cold) defrosts. A register that stays fixed through compressor starts and defrosts

@@ -173,19 +173,18 @@ Later session (Oct 2026) findings and fixes:
 **To do**
 1. **Soak (underway):** several days fully local. Watch ESP restarts, the `bad=` frame count
    trend (2 during the sweep), and that "Seconds Since HP Update" stays low.
-2. **ACTION — circulating pump decode (raised 21 Oct 2026).** "Circulating Pump Relay"
-   (A80C bit 5) was seen OFF while "Flow Detected" was on and the pump speed (A80F) was
-   varying. Bit 5 is SEEN to follow the test menu's circulation-pump output (16 and 21 Oct),
-   but may switch a different pump (e.g. radiator circuit, cf. 7002 bit 2) from the
-   speed-controlled charge pump. "Circulating Pump Running" (bit 5 AND speed > 10 %) is
-   affected too. Next step: line up A80C bits, A80F and ABEA bit 4 over a day from the
-   collector log (keys dev02.w.43020, dev02.w.43023, dev04.r.44010) and fix the decode.
-3. **ACTION — cold-weather checks (outstanding)** (needs the first cold spell and defrosts):
-   - defrost units: FIRST DEFROST SEEN ~09:25 21 Oct 2026 (2171 3122 -> 3123; 2173 reset to
-     0 then rose with the compressor; 2172 422 -> 18417 = the last 2173 value). Supports 2173 =
-     compressor run minutes since the last defrost and 2172 = that count at the defrost.
-     Needs one more defrost to call it confirmed;
-   - ODU values (2091-2096, 2095 bits): fans, valve and defrost bit should follow real behaviour;
+2. **DONE — circulating pump decode (22 Oct 2026).** There is ONE circulating pump. A80C bit 5
+   is a heating-mode output (clear in Hot Water mode while the pump runs), now named "Heating
+   Circuit Output (A80C bit 5)". "Circulating Pump" = speed A80F > 10 % AND Flow Detected.
+3. **ACTION — cold-weather checks (mostly answered 22 Oct)** (needs the first cold spell and defrosts):
+   - DONE: defrost registers, SEEN at three defrosts 21-22 Oct 2026 (2171 3122 -> 3125).
+     2173 = compressor run minutes since the last defrost (resets at each defrost, rises only
+     with the compressor); 2172 = that count captured at the defrost (18417, then 160).
+     Renamed in the YAML. One small check left: 2173 read ~160 just before the 22 Oct reset;
+   - ODU values: 2092-2095 never change on this unit (decodes marked "unverified, does not
+     change", bit decodes disabled by default). Working replacements: "Defrost Active" (2149
+     bits 4/5), "ODU Run Mode" (ABF4: 4/5/6/78), "ODU State Code" (2083: 0/2/5/6). Still open:
+     which registers carry the real four-way valve, fan feedback and flow status;
    - Pumps & Valves decodes (system enable, test mode still unconfirmed);
    - 2120 integral: compressor should start near -60 (1070) and aux heat near -600 (1111).
 
@@ -209,6 +208,25 @@ Later session (Oct 2026) findings and fixes:
     sweep's job is done). They are in thermia-gateway-2026-10-20d.tar.gz if ever needed again
     (e.g. to map 1800 bits 1-15). Gateway shadow and handshake check are kept: they are only
     active with a real gateway connected.
+
+**22 Oct 2026, revision 3 of yaml-update-list.md + component logging (§7):** new derived
+sensors ODU Run Mode, ODU State Code, Defrost Active, Unit Running, Last Defrost Duration;
+pump fix (above); 2032/2034/2083/2090/2091/2096/2150 renames; 2149/2150 bits confirmed. The
+component now logs (tag thermia_events) non-steady mailbox replies, every settings push as
+requested / UNSOLICITED with a push summary, the full 06F4 block, and DEFROST START / END /
+RESULT; and serves a 256-entry event buffer in /registers.json, written by the collector as
+exact-time "event" rows (README-build-and-run.md, README-register-logging.md). New file
+bus_events.h (13 component files). Open items from the note: A1 (are 06F4 updates in test mode
+unsolicited? the new push lines will show), 1786 scale, the other test outputs in 1781-1798,
+A80C bit 5 in test mode, other ODU run-mode / state values, what 2096 captures, where the real
+four-way valve / fan / flow status live, 1762 / 1763.
+
+**Register updates 22 Oct 2026** (yaml-update-list.md revision 2): 2172/2173 renamed to
+"Compressor Minutes Between Last 2 Defrosts" / "Compressor Minutes Since Last Defrost";
+2091 renamed "Reg 2091 (defrost-related flag?, unconfirmed)" and moved to Mailbox & Raw;
+"(unverified)" added to 2092, 2093, 2095 and all 13 binary sensors decoded from 2094/2095;
+shared comment on 2082/2089/2090 (switch together, not compressor on/off). The report gained
+a signed "slast" column and an explicit data-period header.
 
 **Register additions 21 Oct 2026** (from the collector analysis, yaml-update-list.md):
 HP runtime clock 2136-2142 (2136 was "Post Box", now "HP Clock Second") plus an "HP Clock

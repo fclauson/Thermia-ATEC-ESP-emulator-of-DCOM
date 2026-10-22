@@ -1,12 +1,12 @@
 # Build, flash, and operate
 
-**Last updated:** 21 October 2026
+**Last updated:** 22 October 2026
 
 ## Layout
 
 ```
 thermia-gateway.yaml                      ESPHome device config
-components/thermia_gateway/               the custom component (12 files, see below)
+components/thermia_gateway/               the custom component (13 files, see below)
 tests/                                    host-only C++ tests (NEVER copy into the component)
 *.md                                      docs (start with HANDOFF.md)
 ```
@@ -14,10 +14,10 @@ tests/                                    host-only C++ tests (NEVER copy into t
 **Critical:** the `tests/` folder must stay OUTSIDE `components/thermia_gateway/`. ESPHome
 compiles every `.cpp` in a component folder; the test files have their own `main()` and read
 capture logs from disk, so if they land in the component folder the firmware build breaks.
-The component folder should contain exactly these 12 files (no test `.cpp` files):
+The component folder should contain exactly these 13 files (no test `.cpp` files):
 `__init__.py, thermia_gateway.h, thermia_gateway.cpp, gateway_responder.h, gateway_shadow.h,
 cm930_handshake.h, modbus_rtu.h, register_store.h, registers_json.h, registers_json_handler.h,
-reg_ranges.h, alarm_bits.h`
+bus_events.h, reg_ranges.h, alarm_bits.h`
 
 ## Build / flash
 
@@ -96,3 +96,27 @@ returns the ESP to its default (disarmed, then auto per config).
   the first few seconds, then ARMED once the listen window passes with no real gateway heard.
 - `Seconds Since HP Update` low and resetting; `Mailbox Reads Dropped` at/near 0.
 - `Gateway Shadow Mismatches` and handshake mismatches at 0.
+
+
+## Event log lines (tag `thermia_events`, INFO) — added 22 Oct 2026
+
+Logging only; none of this changes what the ESP transmits.
+
+| Line | When |
+|---|---|
+| `mailbox served: 1800-1805 = ...` | every mailbox reply the ESP sends that is NOT the steady state (0 0 0 0 077F 0006), in hex |
+| `settings push: block 0xNNNN (n) xq - requested (...)` / `UNSOLICITED` | every FC16 the heat pump sends to a settings block (1000-1798). "requested" = that block's upload bit (1802/1803) or re-read bit (1800/1801) was served within the last 60 s |
+| `settings push ended: N block(s) ... 06F4 INCLUDED / not included; preceded by: ...` | 10 s after the last block of a push: block counts and whether a resync request or test-mode entry (A811 -> 200) came just before |
+| `06F4 block 1780-1798: v v v ...` | every write of the test-mode block, all 19 values |
+| `DEFROST START: ...` | live ODU run mode (dev4 ABF4) becomes 78: 2173, 2149, 2150, outdoor 2023, pump A80F |
+| `DEFROST END after N s` | ABF4 leaves 78 (also sets the "Last Defrost Duration" sensor) |
+| `DEFROST RESULT: ...` | 60 s after the end (runtime copies updated): 2171, 2172, 2173, 2096, 2020 peak |
+
+**When does the ESP set 1802/1803 (upload requests)?** Only during a full resync (the
+`MAILBOX_RESYNC` pattern 0 0 7FFF FFFF 0080 0007, held 35 s, from the button or once at
+auto-takeover). Settings writes use 1800/1801 only. So a settings push logged as UNSOLICITED was
+not asked for by the ESP.
+
+The watchlist changes (2149, 2150, 2032, 2083, 2091, 2132, 2148, 2171, 2172, 1363, 2013, 2018,
+1780-1798, and live dev04.w.44020 / dev02.w.43020 / dev02.w.43025) are also kept, with exact
+times, in a 256-entry buffer served in `/registers.json` for the collector's event rows.

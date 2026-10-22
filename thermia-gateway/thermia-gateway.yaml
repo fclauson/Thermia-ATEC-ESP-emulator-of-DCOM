@@ -732,6 +732,9 @@ thermia_gateway:
       device_class: temperature
       accuracy_decimals: 0
     # 2020 TEMPERATURES | Integer (sensor output) | read-only
+    # Live copy of dev4 ABE0. Jumps to 46-70 C in every defrost (hot gas through the outdoor
+    # coil in reverse cycle), otherwise -3..+10 C in cold weather: behaves like an outdoor-coil
+    # refrigerant temperature.
     - register: 2020
       name: "REG_OPER_DATA_REFR_1_BRINE_IN_MA_SA"
       device_id: dev_temps
@@ -923,11 +926,11 @@ thermia_gateway:
     - register: 2172
       name: "Compressor Minutes Between Last 2 Defrosts (2172)"   # CSV: REG_DEFROSTS_BETW2DEFR_MA_SA
       device_id: dev_defrost
-      # Compressor run minutes between the last two defrosts = the 2173 count captured at each
-      # defrost. Three defrosts seen (2171 3122 -> 3125): 21 Oct ~09:25 2172 422 -> 18417 (the
-      # last 2173 value was 18415; ~307 h of compressor time since the April defrost);
-      # 22 Oct ~04:20 -> 160 (two cold-night defrosts). Open check: 2173 read ~160 just before
-      # the 04:20 reset.
+      # = 2173's value captured at each defrost, i.e. compressor minutes between the last two
+      # defrosts. SEEN at four defrosts (2171 3122 -> 3126), 2173 just before -> 2172 after:
+      #   21 Oct ~09:25  18415 -> 18417     22 Oct 01:10  226 -> 228
+      #   22 Oct 04:20     157 -> 160       22 Oct 07:40  181 -> 183
+      # (the extra 2-3 min is the gap between the last 5-min sample and the defrost).
       unit_of_measurement: "min"
       accuracy_decimals: 0
       signed: false
@@ -935,10 +938,10 @@ thermia_gateway:
     - register: 2173
       name: "Compressor Minutes Since Last Defrost (2173)"   # CSV: REG_DEFROST_TIME_LAST_DEFROST_MA_SA
       device_id: dev_defrost
-      # Compressor run minutes since the last defrost. SEEN at three defrosts (21 Oct ~09:25,
-      # overnight 21-22 Oct, 22 Oct ~04:20): resets to 0 at each defrost and rises only while
-      # the compressor runs (e.g. 0 -> 147 by 07:00 on 22 Oct while 2160 rose), holding when it
-      # stops. Earlier: +2457 Aug -> 4 Oct while compressor hours rose 39 h (= 2340 min).
+      # Compressor run minutes since the last defrost. SEEN at four defrosts (21 Oct ~09:25,
+      # 22 Oct 01:10, 04:20, 07:40): resets to 0 at each defrost and rises only while the
+      # compressor runs; pauses while it is stopped (141 -> 143 across the 22 Oct 03:45-04:00
+      # stop). Earlier: +2457 Aug -> 4 Oct while compressor hours rose 39 h (= 2340 min).
       unit_of_measurement: "min"
       accuracy_decimals: 0
       signed: false
@@ -958,13 +961,12 @@ thermia_gateway:
     # Found 16 Oct 2026: bit 0 = change-over valve (1 = hot water, 0 = heating),
     # bit 5 = circulating pump relay, bit 6 = set in every capture with the system on,
     # clear with the system off (14:40 capture) -- possibly a system enable output.
-    # 21 Oct 2026: reached 97 (bits 6+5+0) during a hot-water run (1363 = 4), consistent with
-    # bit 0 = change-over valve to hot water. In test mode 1780 mirrors this value.
-    # 22 Oct: sat at 65 (bits 6+0) while idle in Hot Water mode, 97 with the pump on, so the
-    # valve stays on the hot-water side between runs; 64 only with the valve on heating.
-    # UNDER REVIEW (21 Oct): bit 5 reported OFF while flow was detected and the pump speed
-    # (A80F) was varying, so bit 5 may switch a different pump (e.g. a radiator-circuit pump,
-    # cf. 7002 bit 2) than the speed-controlled charge pump. See HANDOFF §6.
+    # Values seen: 96 = heating mode (bits 6+5); 97 = hot-water run while in heating mode
+    # (bits 6+5+0); 65 = Hot Water mode, 1363 = 4 (bits 6+0, bit 5 clear); 64 = heating side,
+    # bit 5 clear (test mode). In test mode 1780 mirrors this value.
+    # Bit 5 is NOT "pump running": there is ONE circulating pump (radiators and tank, chosen by
+    # the bit 0 valve), and on 22 Oct 06:40-08:00 it ran at 40-100 % with flow and the
+    # compressor heating the tank while bit 5 was clear. Bit 5 = heating-mode output.
     # The binary sensors below decode the live A80C frame instead of this copy.
     - register: 2013
       name: "Reg 2013 (gateway copy of dev2 A80C)"
@@ -975,8 +977,9 @@ thermia_gateway:
       entity_category: diagnostic
     # 2016: gateway copy of dev2 A80F, the circulating pump speed demand in %. Lags and
     # skips steps; "Circulating Pump Speed" (sensor: section) reads the live frame. In normal
-    # running it modulates over 10-100 % (30 distinct values on 21 Oct 2026); in test mode
-    # 1783 mirrors it.
+    # running it modulates over 10-100 % (30 distinct values on 21 Oct 2026), and goes to 100 %
+    # during every defrost. It is the speed command for the SINGLE circulating pump. In test
+    # mode 1783 mirrors it.
     - register: 2016
       name: "Reg 2016 (gateway copy of dev2 A80F)"
       device_id: dev_mailbox
@@ -1002,36 +1005,37 @@ thermia_gateway:
       state_class: measurement
       accuracy_decimals: 0
       entity_category: diagnostic
-    # 2032 and 2036 (ABF4): identical values, only 4 distinct (4..78) on 21 Oct 2026. Kept
-    # changing until 16:55 while the HP was idle after 13:20, so NOT compressor demand.
-    # Meaning unknown; may be partly defrost-related (new value 6 at 04:25 on 22 Oct, just
-    # after a defrost).
+    # 2032 and 2036 (ABF4): identical values = ODU run mode: 4 stopped, 5 stopping, 6 heating
+    # (heating and hot water), 78 defrost (all four defrosts). See the "ODU Run Mode" sensor.
     - register: 2032
-      name: "Reg 2032 (HP cmd to dev4 ABF4)"
+      name: "Reg 2032 (HP cmd to dev4 ABF4, ODU run mode)"
       device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
       entity_category: diagnostic
-    # 2034 (ABF6): test-mode fan ramp drove ABF6 0->10->20->30->40->50 (SEEN once, 21 Oct 2026);
-    # normal running reached 80. 1786 mirrors it in test mode.
+    # 2034 (ABF6) = ODU fan command: test-mode ramp 0->10->20->30->40->50 (SEEN once, 21 Oct);
+    # normal running 63-80; 0 during every defrost (SEEN 4 times) and when the unit is stopped.
+    # 1786 mirrors it in test mode.
     - register: 2034
-      name: "Reg 2034 (HP cmd to dev4 ABF6, ODU fan cmd?)"
+      name: "Reg 2034 (HP cmd to dev4 ABF6, ODU fan cmd)"
       device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
       entity_category: diagnostic
-    # 2036: same value as 2032 (ABF4) at every sample; see the 2032 comment.
+    # 2036: same value as 2032 (ABF4, ODU run mode) at every sample; see the 2032 comment.
     - register: 2036
       name: "Reg 2036 (same as 2032, ABF4)"
       device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
       entity_category: diagnostic
-    # 2082 / 2089 / 2090 always switch together between two states (21-22 Oct 2026):
-    #   state A: 2082 = 45060, 2089 = 0,   2090 = 0  (from 21 Oct 13:20, end of a run)
-    #   state B: 2082 = 56325, 2089 = 256, 2090 = 1  (from 22 Oct 04:00)
-    # Only 4 changes in ~14 h despite many compressor cycles, so NOT compressor on/off.
-    # 2089 = 256 and 2090 = 1 look like the same flag in different bytes. Meaning unknown.
+    # 2082 / 2089 / 2090 always switch together between two states = unit stopped / running:
+    #   stopped: 2082 = 45060 (0xB004), 2089 = 0,   2090 = 0   (21 Oct 13:20 run end;
+    #            22 Oct 03:45 unit stopped, 2149 = 0)
+    #   running: 2082 = 56325 (0xDC05), 2089 = 256, 2090 = 1   (22 Oct 04:00 restart and all
+    #            normal running)
+    # 2089 = 256 and 2090 = 1 are the same flag in different bytes. They do NOT change at
+    # defrosts. 2082 stays signed: false (a bit-field state word). See "Unit Running".
     - register: 2082
       name: "Reg 2082"
       device_id: dev_mailbox
@@ -1039,14 +1043,16 @@ thermia_gateway:
       accuracy_decimals: 0
       entity_category: diagnostic
       signed: false
+    # 2083 = ODU state code: 0 stopped, 2 running, 5 defrost, 6 defrost recovery (1, 3, 4 not
+    # yet seen). 2084 has always equalled 2083. See the "ODU State Code" text sensor.
     - register: 2083
-      name: "Reg 2083"
+      name: "ODU State Code (2083)"
       device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
       entity_category: diagnostic
     - register: 2084
-      name: "Reg 2084"
+      name: "Reg 2084 (same as 2083)"
       device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
@@ -1059,64 +1065,67 @@ thermia_gateway:
       entity_category: diagnostic
       signed: false
     - register: 2090
-      name: "Reg 2090 (devA5 reg 10)"
+      name: "Reg 2090 (devA5 reg 10, unit running flag)"
       device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
       entity_category: diagnostic
-    # VALIDITY: NOT VERIFIED ON THIS BUS. Over ~14 h on 21-22 Oct 2026, with the compressor
-    # running and at least two defrosts, 2092, 2093, 2094 and 2095 NEVER changed. A defrost
-    # normally reverses the four-way valve, so the 2094 "Fourway Valve" bit (and the 2095
-    # "Defrost Active" bit) should have changed. Names carry "(unverified)"; kept because the
-    # mapping may hold on another firmware/profile. 2096 (high pressure) DID change (30..47
-    # around the 04:20 defrost). Which registers really carry valve/fan/flow status is open.
+    # VALIDITY: SHOWN WRONG ON THIS UNIT. Over 22 Oct 00:00-08:00, with the compressor running
+    # and three defrosts, 2094 = 300 and 2095 = 130 the whole time, and 2092 = 70 / 2093 = 55
+    # never changed. "ODU Defrost Active" (2095 bit 2) stayed off through all three defrosts
+    # while 2149 showed Building/Hot Water Defrost and ABF4 = 78. Names carry "(unverified,
+    # does not change)" and the bit decodes are disabled by default; kept because the mapping
+    # may hold on another firmware/profile. Working replacements: "Defrost Active" (2149),
+    # "ODU Run Mode" (ABF4) and "ODU State Code" (2083).
     # 2091-2096: outdoor unit (ODU) telemetry, names supplied directly (not from the
     # Thermia Online definitions file). 2094/2095 are multi-bit status words -- the
     # individual flags are decoded as binary sensors further down, using the raw value
     # published here.
-    # 2091: only ever 0 or 1, while the real fan command (2034 / ABF6) ranges 0-80, so it
-    # is not a fan speed. It toggles together with 2132 and 2148 a few minutes after defrosts
-    # (21 Oct 09:35, 22 Oct 04:25): 4 pulses against 2-3 defrosts, so not one per defrost.
-    # 2132 / 2148 are not entities yet (log_changes catches them).
+    # 2091: only ever 0 or 1 (the real fan command 2034 / ABF6 is 0-80). 1 in the sample during
+    # each defrost (21 Oct 09:35; 22 Oct 01:10, 04:20, 07:40), 0 otherwise. 2132 and 2148 do
+    # exactly the same; not entities (log_changes and the event log catch them).
     - register: 2091
-      name: "Reg 2091 (defrost-related flag?, unconfirmed)"
+      name: "Reg 2091 (defrost flag, unconfirmed)"
       device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
       signed: false
       entity_category: diagnostic
     - register: 2092
-      name: "ODU Fan 2 Speed (unverified)"
+      name: "ODU Fan 2 Speed (unverified, does not change)"
       device_id: dev_odu
       state_class: measurement
       accuracy_decimals: 0
       signed: false
     - register: 2093
-      name: "ODU Expansion Valve Step (unverified)"
+      name: "ODU Expansion Valve Step (unverified, does not change)"
       device_id: dev_odu
       state_class: measurement
       accuracy_decimals: 0
       signed: false
     - register: 2094
-      name: "ODU Status Word (raw, see binary sensors below)"
+      name: "ODU Status Word (raw, unverified, does not change)"
       device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
       signed: false
       entity_category: diagnostic
     - register: 2095
-      name: "ODU Operation Status (unverified)"
+      name: "ODU Operation Status (unverified, does not change)"
       device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
       signed: false
       entity_category: diagnostic
+    # 2096: changed ONLY at defrosts (30 -> 47 -> 46 -> 20 across the 22 Oct defrosts) and held
+    # its value in between, so it is a value captured at each defrost, not a live pressure.
     - register: 2096
-      name: "ODU High Pressure Transmitter"
-      device_id: dev_odu
+      name: "Reg 2096 (changes only at defrost, unconfirmed)"
+      device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
       signed: false
+      entity_category: diagnostic
     # 2149: Operational Status Register. Multi-bit word showing which heating, cooling
     # or hot-water mode is active (bits 0-7, decoded as binary sensors and as the
     # "Operational Status" text sensor further down). 0 = nothing active.
@@ -1158,6 +1167,9 @@ thermia_gateway:
       accuracy_decimals: 0
       signed: false
       entity_category: diagnostic
+    # 2149 bits confirmed by real data (22 Oct 2026): 0 = idle, bit 0 (1) Building Space Heating,
+    # bit 1 (2) Domestic Hot Water, bit 4 (16) Building Defrost (SEEN twice, defrosts during
+    # heating), bit 5 (32) Hot Water Defrost (SEEN once, defrost during a hot-water run).
     - register: 2149
       name: "Operational Status Register"
       device_id: dev_mailbox
@@ -1165,8 +1177,11 @@ thermia_gateway:
       accuracy_decimals: 0
       signed: false
       entity_category: diagnostic
+    # 2150: 1 during both defrosts in heating, 2 during the defrost in a hot-water run, and 2 at
+    # 06:00 when heating resumed with hot water waiting: bit 0 = heating waiting, bit 1 = hot
+    # water waiting (confirmed 22 Oct 2026). Other bits still unconfirmed.
     - register: 2150
-      name: "Queued Demands Word (raw, see binary sensors below) (unconfirmed)"
+      name: "Queued Demands Word (raw, see binary sensors below)"
       device_id: dev_mailbox
       state_class: measurement
       accuracy_decimals: 0
@@ -1224,11 +1239,11 @@ thermia_gateway:
     # 2136-2142: runtime copy of the HP clock, 2136 = seconds ... 2142 = weekday, the same
     # layout as CSV 1770-1776 (system time). The +21 jumps first seen on 2136 (once thought
     # to be a post box) are just the ~21 s runtime rotation sampling a seconds field.
-    # 2139 day and 2142 weekday: SEEN rolling over at midnight HP time on 21 and 22 Oct 2026
-    # (weekday 0 = Monday, so 3 = Thursday 22 Oct). 2137/2138: INFERRED, strong. 2140/2141:
-    # inferred from the layout, never seen changing. The HP clock runs ~1 h behind local time
-    # (UTC, or no summer time): rollovers at 01:00 local on both days, and 1770-1772 read
-    # 13:31 at ~14:30 local (21 Oct) and 05:44:56 at the 06:45 push (22 Oct).
+    # All SEEN (21-22 Oct 2026): 2137 minute; 2138 hour (read 23 at 00:00 local); 2139 day and
+    # 2142 weekday rolled over at midnight HP time on both days (weekday 0 = Monday); 2140
+    # month reads 10; 2141 year reads 26 (two digits). The HP clock is on UTC (Irish winter
+    # time), so 1 h behind local during summer time, and ~3 min fast: at 00:00 local on
+    # 22 Oct it read 23:03:25; 1770-1772 read 05:44:56 at the 06:45 local push.
     - register: 2136
       name: "HP Clock Second (2136)"
       device_id: dev_mailbox
@@ -1278,10 +1293,12 @@ thermia_gateway:
       accuracy_decimals: 0
       signed: false
       entity_category: diagnostic
-    # 1780-1798 (W0 bit 15 block, 0x06F4): never sent in a resync. First seen 21 Oct 2026
-    # 17:17:33 when test mode was entered, which coincided with a full settings push; after
-    # that 1780/1783/1786 updated each time a test output changed. Only these three are
-    # named; the rest of 1781-1798 are caught by log_changes and /registers.json.
+    # 1780-1798 (W0 bit 15 block, 0x06F4): NOT included in the normal resync push. First
+    # seen 21 Oct 2026 17:17:33, 0.5 s after test mode was entered (A811 12 -> 200), in a full
+    # settings push that included 1780-1798; the ESP had been running ~2.8 h and its startup
+    # resync had not brought them. After that 1780/1783/1786 updated each time a test output
+    # changed. Only these three are named; the rest of 1781-1798 are caught by log_changes,
+    # /registers.json and the component's 06F4 log line.
     # 1780: SEEN once: 64 -> 96 when the circ pump was switched on in test mode, back on exit.
     - register: 1780
       name: "Test Output Bits 1780 (mirror of A80C, unconfirmed)"
@@ -1403,8 +1420,8 @@ text_sensor:
   # The heat pump's own clock, from its runtime copy 2137-2142 (see the 2136 comment).
   # Minute resolution on purpose: a text sensor logs every change in HA's activity log, so
   # showing seconds would add an entry every ~21 s ("HP Clock Second (2136)" has them).
-  # Blank until all six registers have been seen. Runs ~1 h behind local time (UTC, or no
-  # summer time; SEEN on 21 and 22 Oct 2026). Year accepted as 26 or 2026.
+  # Blank until all six registers have been seen. The HP clock is on UTC (1 h behind local
+  # during summer time) and ~3 min fast (SEEN 21-22 Oct 2026). 2141 is a two-digit year.
   - platform: template
     name: "HP Clock (runtime)"
     device_id: dev_mailbox
@@ -1420,6 +1437,44 @@ text_sensor:
       static const char *const W[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
       const char *w = (wd >= 0 && wd < 7) ? W[(int) wd] : "?";
       return str_sprintf("%04d-%02d-%02d %02d:%02d (%s)", year, (int) mo, (int) d, (int) h, (int) mi, w);
+
+  # ODU run mode = the HP's command to dev4 ABF4 (runtime copy 2032). Uses the live ABF4 value
+  # (~1 s updates) and falls back to 2032 (~21 s) if the live frame is unavailable.
+  # 4 stopped, 5 stopping (or a transition), 6 heating (heating and hot water), 78 defrost.
+  # "(unconfirmed)" until a cooling or test-mode run shows whether other values exist.
+  - platform: template
+    name: "ODU Run Mode (from ABF4, unconfirmed)"
+    device_id: dev_odu
+    update_interval: 2s
+    lambda: |-
+      int v;
+      if (id(hp_gateway)->has_cmd(4, 0xABF4)) v = id(hp_gateway)->get_cmd(4, 0xABF4);
+      else if (id(hp_gateway)->has_register(2032)) v = id(hp_gateway)->get_register(2032);
+      else return {};
+      switch (v) {
+        case 4: return std::string("Stopped (4)");
+        case 5: return std::string("Stopping (5)");
+        case 6: return std::string("Heating (6)");
+        case 78: return std::string("Defrost (78)");
+        default: return str_sprintf("Unknown (%d)", v);
+      }
+
+  # ODU state code = 2083 (2084 always equal): 0 stopped, 2 running, 5 defrost, 6 defrost
+  # recovery (SEEN 21-22 Oct 2026); 1, 3 and 4 not seen yet.
+  - platform: template
+    name: "ODU State Code"
+    device_id: dev_odu
+    update_interval: 5s
+    lambda: |-
+      if (!id(hp_gateway)->has_register(2083)) return {};
+      const int v = id(hp_gateway)->get_register(2083);
+      switch (v) {
+        case 0: return std::string("Stopped (0)");
+        case 2: return std::string("Running (2)");
+        case 5: return std::string("Defrost (5)");
+        case 6: return std::string("Defrost recovery (6)");
+        default: return str_sprintf("Unknown (%d)", v);
+      }
 
   # Outcome of the last write or resync request.
   - platform: template
@@ -1522,6 +1577,22 @@ button:
 # Live I/O numeric values (see the LIVE I/O block under binary_sensor:). NAN = unknown
 # when no fresh frame has arrived for 5 s.
 sensor:
+  # Length of the last defrost in seconds, timed by the component from the live ODU run mode
+  # (dev4 ABF4 == 78, ~1 s resolution). Blank until a defrost has been seen since the ESP
+  # booted. The component also logs DEFROST START / END / RESULT lines (tag thermia_events).
+  - platform: template
+    name: "Last Defrost Duration"
+    device_id: dev_defrost
+    unit_of_measurement: "s"
+    device_class: duration
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: |-
+      const float v = id(hp_gateway)->last_defrost_duration_s();
+      if (isnan(v)) return {};
+      return v;
+
   # Handshakes whose real gateway reply equalled the computed answer, since ESP boot.
   - platform: template
     name: "Handshake Matches"
@@ -1634,10 +1705,11 @@ binary_sensor:
   #   dev2 cmds    A80C->2013, A80E->2015, A80F->2016, A811->2018
   #   dev4 reads   44000+n -> 2020+n   (ABE0->2020, ABE1->2021, ABE2->2022,
   #                                     ABE4->2024, ABE9->2029, ABEA->2030)
-  #   dev4 cmds    ABF4->2032 (2036 identical), ABF6->2034
+  #   dev4 cmds    ABF4->2032 (2036 identical, ODU run mode), ABF6->2034 (ODU fan)
   #   dev6 cmds    AFDC->2074, AFDD->2075, AFE0->2078
   # Outdoor temp is also sent packed as 0x05nn (low byte = outdoor temp, high byte 5 = unknown)
   # to dev04 ABF7, dev05 AC29 and dev06 AFE0 (= 2078). 2010/2035/2055 copy outdoor temp 2023.
+  # dev4 reads 44003 and 44005-44008 always read 64536 (= -1000): sensor not fitted.
   # The runtime copies lag the live values by up to ~21 s, so snapshot min/max can differ
   # slightly (e.g. 2021 max 23 vs ABE1 max 17 on 22 Oct).
   # ==================================================================================
@@ -1649,25 +1721,27 @@ binary_sensor:
     lambda: |-
       return id(hp_gateway)->has_cmd(2, 0xA80C);
 
-  # --- UNDER REVIEW (21 Oct 2026): relay bit 5 seen OFF with flow and a varying speed, so
-  # --- this can show "off" while the speed-controlled pump runs. See HANDOFF §6.
-  # --- Pump actually running = relay (A80C bit 5) on AND speed (A80F) above 10%.
-  # --- With the system off the HP holds the relay on at 10%, and in test mode 10%
-  # --- gave no flow, so the relay bit alone is not "running" (14:40 capture).
+  # --- The ONE circulating pump (radiators and tank) is running = speed command (A80F) above
+  # --- 10% AND Flow Detected (dev4 ABEA bit 4 clear); falls back to the speed alone if the
+  # --- ABEA reply is unavailable. The HP holds 10% with the system off, and in test mode 10%
+  # --- gave no flow. A80C bit 5 is NOT used: it is a heating-mode output, clear in Hot Water
+  # --- mode while this pump runs (22 Oct 2026).
   - platform: template
     name: "Circulating Pump"
     device_id: dev_liveio
     device_class: running
     lambda: |-
-      if (!id(hp_gateway)->has_cmd(2, 0xA80C) || !id(hp_gateway)->has_cmd(2, 0xA80F)) return {};
-      bool relay = (id(hp_gateway)->get_cmd(2, 0xA80C) & (1u << 5)) != 0;
-      return relay && id(hp_gateway)->get_cmd(2, 0xA80F) > 10;
+      if (!id(hp_gateway)->has_cmd(2, 0xA80F)) return {};
+      const bool speed = id(hp_gateway)->get_cmd(2, 0xA80F) > 10;
+      if (!id(hp_gateway)->has_reply(4, 0xABEA)) return speed;
+      return speed && (id(hp_gateway)->get_reply(4, 0xABEA) & (1u << 4)) == 0;
 
-  # --- A80C bit 5: follows the test menu's "circulation pump" output (SEEN 16 and 21 Oct).
-  # --- UNDER REVIEW (21 Oct 2026): seen OFF while flow was detected and the pump speed was
-  # --- varying, so it may be a different pump (e.g. radiator circuit) from the one A80F drives.
+  # --- A80C bit 5: set in heating mode, clear in Hot Water mode while the pump still runs, so
+  # --- NOT the pump on/off. Most likely the controller's heating-circuit pump output, which in
+  # --- this one-pump installation means "heating mode active". It also follows the test
+  # --- menu's circulation-pump output (SEEN 16 and 21 Oct).
   - platform: template
-    name: "Circulating Pump Relay"
+    name: "Heating Circuit Output (A80C bit 5)"
     device_id: dev_liveio
     lambda: |-
       if (!id(hp_gateway)->has_cmd(2, 0xA80C)) return {};
@@ -1710,89 +1784,124 @@ binary_sensor:
       if (!id(hp_gateway)->has_cmd(2, 0xA811)) return {};
       return id(hp_gateway)->get_cmd(2, 0xA811) == 200;
 
-  # --- ODU status word 2095: bit mapping from reference decoding code; NOT verified on this
-  # --- bus (2095 never changed through two defrosts, 21-22 Oct 2026). See the 2091 comment. ---
+  # --- Defrost in progress: 2149 bit 4 (Building Defrost) OR bit 5 (Hot Water Defrost),
+  # --- both confirmed by real defrosts on 22 Oct 2026. Replaces "ODU Defrost Active" (2095
+  # --- bit 2), which stayed off through three defrosts. The live dev4 cmd ABF4 == 78 gives the
+  # --- same signal with ~1 s latency (see "ODU Run Mode"); 2149 updates every ~21 s.
   - platform: template
-    name: "ODU Unit On-Off (unverified)"
+    name: "Defrost Active"
+    device_id: dev_defrost
+    device_class: running
+    lambda: |-
+      if (!id(hp_gateway)->has_register(2149)) return {};
+      return (id(hp_gateway)->get_register(2149) & ((1u << 4) | (1u << 5))) != 0;
+
+  # --- Unit running = 2090 == 1 (2082 / 2089 / 2090 switch together between stopped and
+  # --- running; they do not change at defrosts). See the 2082 comment.
+  - platform: template
+    name: "Unit Running (2090, unconfirmed)"
+    device_id: dev_opmode
+    device_class: running
+    lambda: |-
+      if (!id(hp_gateway)->has_register(2090)) return {};
+      return id(hp_gateway)->get_register(2090) == 1;
+
+  # --- ODU status word 2095: bit mapping from reference decoding code; NOT verified on this
+  # --- bus: 2095 = 130 throughout three defrosts on 22 Oct 2026. Disabled by default. ---
+  - platform: template
+    name: "ODU Unit On-Off (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     lambda: |-
       if (!id(hp_gateway)->has_register(2095)) return {};
       return (id(hp_gateway)->get_register(2095) & (1u << 0)) != 0;
   - platform: template
-    name: "ODU Defrost Active (unverified)"
+    name: "ODU Defrost Active (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     device_class: running
     lambda: |-
       if (!id(hp_gateway)->has_register(2095)) return {};
       return (id(hp_gateway)->get_register(2095) & (1u << 2)) != 0;
   - platform: template
-    name: "ODU Heating Mode (unverified)"
+    name: "ODU Heating Mode (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     lambda: |-
       if (!id(hp_gateway)->has_register(2095)) return {};
       return (id(hp_gateway)->get_register(2095) & (1u << 5)) != 0;
   - platform: template
-    name: "ODU Hot Water Mode (unverified)"
+    name: "ODU Hot Water Mode (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     lambda: |-
       if (!id(hp_gateway)->has_register(2095)) return {};
       return (id(hp_gateway)->get_register(2095) & (1u << 6)) != 0;
   - platform: template
-    name: "ODU Cooling Mode (unverified)"
+    name: "ODU Cooling Mode (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     lambda: |-
       if (!id(hp_gateway)->has_register(2095)) return {};
       return (id(hp_gateway)->get_register(2095) & (1u << 7)) != 0;
   - platform: template
-    name: "ODU Thermal On-Off (unverified)"
+    name: "ODU Thermal On-Off (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     lambda: |-
       if (!id(hp_gateway)->has_register(2095)) return {};
       return (id(hp_gateway)->get_register(2095) & (1u << 9)) != 0;
   - platform: template
-    name: "ODU Compressor Down (unverified)"
+    name: "ODU Compressor Down (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     lambda: |-
       if (!id(hp_gateway)->has_register(2095)) return {};
       return (id(hp_gateway)->get_register(2095) & (1u << 10)) != 0;
 
   # --- ODU status word 2094: bit mapping from reference decoding code; NOT verified on this
-  # --- bus (2094 never changed through compressor runs and defrosts, 21-22 Oct 2026). ---
+  # --- bus: 2094 = 300 throughout compressor runs and three defrosts. Disabled by default. ---
   - platform: template
-    name: "ODU Compressor Status (unverified)"
+    name: "ODU Compressor Status (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     device_class: running
     lambda: |-
       if (!id(hp_gateway)->has_register(2094)) return {};
       return (id(hp_gateway)->get_register(2094) & (1u << 0)) != 0;
   - platform: template
-    name: "ODU Fourway Valve Status (unverified)"
+    name: "ODU Fourway Valve Status (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     lambda: |-
       if (!id(hp_gateway)->has_register(2094)) return {};
       return (id(hp_gateway)->get_register(2094) & (1u << 1)) != 0;
   - platform: template
-    name: "ODU Fan Status (unverified)"
+    name: "ODU Fan Status (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     device_class: running
     lambda: |-
       if (!id(hp_gateway)->has_register(2094)) return {};
       return (id(hp_gateway)->get_register(2094) & (1u << 2)) != 0;
   - platform: template
-    name: "ODU Flow Detected (unverified)"
+    name: "ODU Flow Detected (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     lambda: |-
       if (!id(hp_gateway)->has_register(2094)) return {};
       return (id(hp_gateway)->get_register(2094) & (1u << 3)) != 0;
   - platform: template
-    name: "ODU Refrigerant Used (unverified)"
+    name: "ODU Refrigerant Used (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     lambda: |-
       if (!id(hp_gateway)->has_register(2094)) return {};
       return (id(hp_gateway)->get_register(2094) & (1u << 4)) != 0;
   - platform: template
-    name: "ODU Split (unverified)"
+    name: "ODU Split (unverified, does not change)"
     device_id: dev_odu
+    disabled_by_default: true
     lambda: |-
       if (!id(hp_gateway)->has_register(2094)) return {};
       return (id(hp_gateway)->get_register(2094) & (1u << 5)) != 0;
@@ -1867,13 +1976,13 @@ binary_sensor:
   # --- Queued demands word 2150: names supplied directly, NOT code-confirmed. Bits
   # --- 3 and 5 are deliberately absent (not in the supplied list).
   - platform: template
-    name: "Queued Demand: Heating (unconfirmed)"
+    name: "Queued Demand: Heating"
     device_id: dev_opmode
     lambda: |-
       if (!id(hp_gateway)->has_register(2150)) return {};
       return (id(hp_gateway)->get_register(2150) & (1u << 0)) != 0;
   - platform: template
-    name: "Queued Demand: Hot Water (unconfirmed)"
+    name: "Queued Demand: Hot Water"
     device_id: dev_opmode
     lambda: |-
       if (!id(hp_gateway)->has_register(2150)) return {};

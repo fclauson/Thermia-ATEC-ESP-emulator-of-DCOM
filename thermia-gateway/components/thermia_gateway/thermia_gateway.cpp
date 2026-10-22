@@ -1,4 +1,4 @@
-// thermia_gateway.cpp  v2026.10.20.5  ESP gateway-replacement component (impl)
+// thermia_gateway.cpp  v2026.10.22.1  ESP gateway-replacement component (impl)
 #include <cmath>
 #include "thermia_gateway.h"
 #include "registers_json_handler.h"
@@ -13,6 +13,7 @@ static const char *const TAG = "thermia_gateway";
 static const char *const TAG_DUMP = "thermia_dump";
 static const char *const TAG_UNMAPPED = "thermia_unmapped";
 static const char *const TAG_AUDIT = "thermia_audit";
+static const char *const TAG_EVENTS = "thermia_events";  // logging-only event lines (bus_events.h)
 
 using DumpKind = thermia::RegisterStore::DumpKind;
 
@@ -106,6 +107,8 @@ void ThermiaGateway::loop() {
   const uint8_t *d;
   size_t n;
   if (this->framer_.poll(micros(), &d, &n)) this->handle_frame_(d, n);
+  this->push_session_tick_(millis());
+  this->defrost_tick_(millis());
 }
 
 void ThermiaGateway::feed_byte_(uint8_t b, uint32_t now_us) {
@@ -118,6 +121,7 @@ void ThermiaGateway::handle_frame_(const uint8_t *d, size_t n) {
   this->audit_(d, n);
   this->audit_shadow_(d, n);
   this->responder_.observe(d, n);   // seed the responder store from real writes (always)
+  this->note_settings_push_(d, n);  // logging only: classify FC16 settings pushes
   if (n >= 1 && d[0] == this->decoder_.addr()) this->gw_addressed_seen_ = true;  // HP is talking to us
   this->confirm_readbacks_(d, n);   // reflect a value we wrote once the heat pump re-reads its block
   this->maybe_respond_(d, n);        // answer AS the gateway, only if armed
@@ -186,6 +190,11 @@ void ThermiaGateway::on_register_(uint16_t reg, uint16_t value) {
     return;
   }
   if (!u.changed) return;
+  if (thermia::is_watched_reg(reg)) this->events_.push(millis(), 0, false, reg, value);
+  if (this->defrost_active_ && reg == 2020) {  // peak outdoor-coil temperature during a defrost
+    const int16_t t = (int16_t) value;
+    if (!this->defrost_peak_valid_ || t > this->defrost_peak_2020_) { this->defrost_peak_2020_ = t; this->defrost_peak_valid_ = true; }
+  }
   if (!u.first_seen && this->log_changes_)
     ESP_LOGD(TAG, "reg %u: %u -> %u (signed %d)", reg, u.old_value, value, (int16_t) value);
   this->publish_sensors_(reg, value);
@@ -203,7 +212,20 @@ void ThermiaGateway::on_live_(bool reply, uint8_t dev, uint16_t addr, uint16_t v
       return;
     }
     this->live_[key] = {value, millis()};
+    if (thermia::is_watched_live(reply, dev, addr)) this->events_.push(millis(), dev, reply, addr, value);
     return;
+  }
+  if (it->second.value != value) {
+    if (thermia::is_watched_live(reply, dev, addr)) this->events_.push(millis(), dev, reply, addr, value);
+    if (!reply && dev == 2 && addr == 0xA811 && value == 200) {  // test mode entered
+      this->testmode_seen_ = true;
+      this->last_testmode_ms_ = millis();
+    }
+    if (!reply && dev == 4 && addr == 0xABF4) this->defrost_on_abf4_(it->second.value, value);
+  }
+  if (this->defrost_active_ && reply && dev == 4 && addr == 0xABE0) {  // live copy of 2020
+    const int16_t t = (int16_t) value;
+    if (!this->defrost_peak_valid_ || t > this->defrost_peak_2020_) { this->defrost_peak_2020_ = t; this->defrost_peak_valid_ = true; }
   }
   if (it->second.value != value && this->log_changes_)
     ESP_LOGD(TAG, "live dev%u %s 0x%04X: %u -> %u", (unsigned) dev, reply ? "reply" : "cmd", (unsigned) addr,
@@ -223,7 +245,8 @@ void ThermiaGateway::refresh_registers_json_() {
     const uint32_t k = kv.first;
     live.push_back({((k >> 24) & 1) != 0, (uint8_t) ((k >> 16) & 0xFF), (uint16_t) (k & 0xFFFF), kv.second.value});
   }
-  std::string body = thermia::build_registers_json(this->store_, live, (now - this->boot_ms_) / 1000, this->armed_);
+  std::string body = thermia::build_registers_json(this->store_, live, (now - this->boot_ms_) / 1000, this->armed_,
+                                                   &this->events_, now);
   {
     std::lock_guard<std::mutex> lock(this->json_mutex_);
     this->json_cache_.swap(body);
@@ -508,6 +531,8 @@ void ThermiaGateway::request_full_resync() {
     return;
   }
   this->responder_.request_resync(millis(), 35000);  // 35 s wall-clock hold, auto-reverts
+  this->resync_req_seen_ = true;  // logging only: lets the push summary say what preceded a push
+  this->last_resync_req_ms_ = millis();
   this->last_write_result_ = "full resync requested (heat pump will re-push the table)";
   ESP_LOGW(TAG, "full resync REQUESTED: serving resync mailbox; heat pump should re-push 1000-1777");
 }
@@ -713,7 +738,10 @@ void ThermiaGateway::maybe_respond_(const uint8_t *d, size_t n) {
 
   this->send_frame_(reply.bytes, reply.len);
   if (reply.was_mailbox) this->mbx_served_++;
-  if (reply.was_mailbox) this->responder_.after_mailbox_sent();  // advance a write-flag pulse
+  if (reply.was_mailbox) {
+    this->note_mailbox_served_();              // logging only, before the pulse advances
+    this->responder_.after_mailbox_sent();     // advance a write-flag pulse
+  }
 }
 
 
@@ -747,6 +775,121 @@ std::string ThermiaGateway::takeover_status() const {
 
 bool ThermiaGateway::gateway_replying() const {
   return this->has_gw_reply_ && (millis() - this->last_gw_reply_ms_) < 15000;
+}
+
+// =======================================================================================
+// Event logging (bus_events.h). LOGGING ONLY: nothing here changes what the ESP transmits.
+// =======================================================================================
+
+std::string ThermiaGateway::reg_txt_(uint16_t reg, bool is_signed) const {
+  if (!this->store_.has(reg)) return "?";
+  const uint16_t v = this->store_.get(reg);
+  return is_signed ? to_string((int) (int16_t) v) : to_string((int) v);
+}
+
+// Called after every mailbox reply the ESP actually sent. Remembers which request bits were
+// served (for push classification) and logs any reply that is not the steady state.
+// When does the ESP set 1802/1803 (upload requests)? ONLY during a full resync
+// (GatewayResponder::MAILBOX_RESYNC, 35 s hold). Writes use 1800/1801 only.
+void ThermiaGateway::note_mailbox_served_() {
+  uint16_t w[6];
+  for (uint16_t i = 0; i < 6; i++) w[i] = this->responder_.mailbox(i);
+  this->req_mem_.note_served(w, millis());
+  if (!thermia::mailbox_is_steady(w))
+    ESP_LOGI(TAG_EVENTS, "mailbox served: 1800-1805 = %04X %04X %04X %04X %04X %04X", w[0], w[1], w[2], w[3], w[4],
+             w[5]);
+}
+
+// Every FC16 the heat pump sends to a settings block (1000-1798): one line saying whether it
+// was requested (its mailbox bit was served within the last 60 s) or UNSOLICITED, the full
+// 0x06F4 block values, and the push session it belongs to (summarised when it ends).
+void ThermiaGateway::note_settings_push_(const uint8_t *d, size_t n) {
+  if (n < 9 || d[0] != this->decoder_.addr() || d[1] != 0x10) return;
+  const uint16_t start = (uint16_t) ((d[2] << 8) | d[3]), qty = (uint16_t) ((d[4] << 8) | d[5]);
+  if (d[6] != 2 * qty || n != (size_t) (9 + 2 * qty)) return;  // the heat pump's request, not an ack
+  if (start < 1000 || start > 1798) return;
+  const uint32_t now = millis();
+  uint8_t word = 0, bit = 0;
+  const bool known = thermia::settings_block_bit(start, word, bit);
+  const char *why = known ? this->req_mem_.why(word, bit, now) : nullptr;
+  ESP_LOGI(TAG_EVENTS, "settings push: block 0x%04X (%u) x%u - %s", (unsigned) start, (unsigned) start,
+           (unsigned) qty, why != nullptr ? why : (known ? "UNSOLICITED" : "UNSOLICITED (block not in the flag map)"));
+  if (start == 1780) {  // test-mode block: log every value, every time
+    std::string vals;
+    for (uint16_t i = 0; i < qty; i++) {
+      if (i) vals += ' ';
+      vals += to_string((int) ((d[7 + 2 * i] << 8) | d[8 + 2 * i]));
+    }
+    ESP_LOGI(TAG_EVENTS, "06F4 block 1780-%u: %s", (unsigned) (1780 + qty - 1), vals.c_str());
+  }
+  if (!this->push_active_) {
+    this->push_active_ = true;
+    this->push_first_ms_ = now;
+    this->push_lower_ = this->push_upper_ = this->push_blocks_ = 0;
+  }
+  this->push_last_ms_ = now;
+  this->push_blocks_++;
+  if (known) (word == 1 ? this->push_lower_ : this->push_upper_) |= (uint16_t) (1u << bit);
+}
+
+// A push session ends 10 s after its last block: one summary line with what preceded it.
+void ThermiaGateway::push_session_tick_(uint32_t now) {
+  if (!this->push_active_ || now - this->push_last_ms_ < 10000) return;
+  this->push_active_ = false;
+  auto bits = [](uint16_t m) {
+    unsigned c = 0;
+    for (; m; m &= (uint16_t) (m - 1)) c++;
+    return c;
+  };
+  std::string before;
+  const int32_t since_resync = (int32_t) (this->push_first_ms_ - this->last_resync_req_ms_);
+  const int32_t since_test = (int32_t) (this->push_first_ms_ - this->last_testmode_ms_);
+  if (this->resync_req_seen_ && since_resync >= 0 && since_resync <= 60000)
+    before = str_sprintf("resync request %.1f s before", since_resync / 1000.0f);
+  if (this->testmode_seen_ && since_test >= -10000 && since_test <= 10000) {
+    if (!before.empty()) before += ", ";
+    before += str_sprintf("test-mode entry (A811 -> 200) %.1f s %s", (since_test < 0 ? -since_test : since_test) / 1000.0f,
+                          since_test >= 0 ? "before" : "after the push started");
+  }
+  ESP_LOGI(TAG_EVENTS, "settings push ended: %u block(s) in %.1f s (lower %u/16, upper %u/16), 06F4 %s; preceded by: %s",
+           (unsigned) this->push_blocks_, (this->push_last_ms_ - this->push_first_ms_) / 1000.0f,
+           bits(this->push_lower_), bits(this->push_upper_),
+           (this->push_upper_ & (1u << 15)) ? "INCLUDED" : "not included", before.empty() ? "neither" : before.c_str());
+}
+
+// Live ODU run mode (dev4 ABF4) changed: 78 = defrost.
+void ThermiaGateway::defrost_on_abf4_(uint16_t old_v, uint16_t v) {
+  const uint32_t now = millis();
+  if (v == 78 && old_v != 78) {
+    this->defrost_active_ = true;
+    this->defrost_start_ms_ = now;
+    this->defrost_peak_valid_ = this->store_.has(2020);
+    this->defrost_peak_2020_ = this->defrost_peak_valid_ ? (int16_t) this->store_.get(2020) : 0;
+    const std::string pump = this->has_cmd(2, 0xA80F) ? to_string((int) this->get_cmd(2, 0xA80F)) : "?";
+    ESP_LOGI(TAG_EVENTS,
+             "DEFROST START: 2173 = %s compressor min since last defrost, 2149 = %s, 2150 = %s, outdoor 2023 = %s C, "
+             "pump A80F = %s %%",
+             this->reg_txt_(2173, false).c_str(), this->reg_txt_(2149, false).c_str(),
+             this->reg_txt_(2150, false).c_str(), this->reg_txt_(2023, true).c_str(), pump.c_str());
+  } else if (old_v == 78 && v != 78 && this->defrost_active_) {
+    this->defrost_active_ = false;
+    this->last_defrost_s_ = (now - this->defrost_start_ms_) / 1000.0f;
+    this->defrost_result_pending_ = true;
+    this->defrost_result_due_ms_ = now + 60000;  // the runtime copies take up to ~21 s to update
+    ESP_LOGI(TAG_EVENTS, "DEFROST END after %.0f s (ABF4 78 -> %u); results in 60 s", this->last_defrost_s_,
+             (unsigned) v);
+  }
+}
+
+void ThermiaGateway::defrost_tick_(uint32_t now) {
+  if (!this->defrost_result_pending_ || (int32_t) (now - this->defrost_result_due_ms_) < 0) return;
+  this->defrost_result_pending_ = false;
+  const std::string peak = this->defrost_peak_valid_ ? to_string((int) this->defrost_peak_2020_) : "?";
+  ESP_LOGI(TAG_EVENTS,
+           "DEFROST RESULT: lasted %.0f s; 2171 = %s defrosts, 2172 = %s min between, 2173 = %s, 2096 = %s, "
+           "2020 peak during defrost = %s C",
+           this->last_defrost_s_, this->reg_txt_(2171, false).c_str(), this->reg_txt_(2172, false).c_str(),
+           this->reg_txt_(2173, false).c_str(), this->reg_txt_(2096, false).c_str(), peak.c_str());
 }
 
 void ThermiaGateway::dump_config() {

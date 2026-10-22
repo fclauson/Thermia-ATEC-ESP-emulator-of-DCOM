@@ -1,4 +1,4 @@
-// thermia_gateway.h  v2026.10.20.5  ESP gateway-replacement component (header)
+// thermia_gateway.h  v2026.10.22.1  ESP gateway-replacement component (header)
 #pragma once
 // Thermia / Danfoss DHP-AQ: ESP replacement for the Thermia Online gateway (0x0F).
 //
@@ -35,7 +35,9 @@
 #include "gateway_responder.h"
 #include "register_store.h"
 #include "registers_json.h"
+#include "bus_events.h"
 #include <map>
+#include <cmath>  // NAN
 #include <mutex>
 #include <string>
 #include <vector>
@@ -130,6 +132,9 @@ class ThermiaGateway : public Component, public uart::UARTDevice {
   // Seconds since the heat pump last wrote any register to the gateway address (FC16).
   // Shows whether the heat pump is still actively talking to us. NAN if never seen.
   float seconds_since_hp_update() const;
+  // Length of the last defrost in seconds (from the live ODU run mode, ABF4 == 78). NAN until
+  // a defrost has been seen since boot.
+  float last_defrost_duration_s() const { return this->last_defrost_s_; }
   // Mailbox reads the heat pump requested, served, and skipped because the bus was busy.
   // Dropped reads delay flags reaching the heat pump.
   uint32_t mailbox_requested() const { return this->mbx_req_; }
@@ -208,7 +213,7 @@ class ThermiaGateway : public Component, public uart::UARTDevice {
   bool live_full_warned_{false};
 
   // /registers.json cache (see registers_json.h / registers_json_handler.h)
-  static constexpr uint32_t JSON_REFRESH_MS = 30000;
+  static constexpr uint32_t JSON_REFRESH_MS = 10000;  // also bounds event-time error in the collector
   static constexpr uint32_t JSON_LIVE_MAX_AGE_MS = 60000;  // live values older than this are left out
   void refresh_registers_json_();
   web_server_base::WebServerBase *web_base_{nullptr};
@@ -277,6 +282,30 @@ class ThermiaGateway : public Component, public uart::UARTDevice {
   void publish_reg_(uint16_t reg, uint16_t value);
   void publish_sensors_(uint16_t reg, uint16_t value);  // push to the mapped sensor(s), if any
   bool reg_is_signed_(uint16_t reg) const;  // the register's YAML `signed:` setting
+
+  // --- Event logging (bus_events.h). LOGGING ONLY: none of this changes what is transmitted.
+  //  - events_: watchlist changes with exact times, served in /registers.json (collector rows);
+  //  - mailbox replies that differ from steady state, and every FC16 settings push from the
+  //    heat pump classed "requested" / "UNSOLICITED" (req_mem_), with a push summary;
+  //  - the full 0x06F4 (1780-1798) block on every write;
+  //  - DEFROST START / END / RESULT lines from the live ODU run mode (dev4 ABF4 == 78). ---
+  void note_settings_push_(const uint8_t *d, size_t n);
+  void note_mailbox_served_();
+  void push_session_tick_(uint32_t now);
+  void defrost_on_abf4_(uint16_t old_v, uint16_t v);
+  void defrost_tick_(uint32_t now);
+  std::string reg_txt_(uint16_t reg, bool is_signed) const;  // value or "?" if not seen
+  thermia::EventRing events_;
+  thermia::RequestMemory req_mem_;
+  bool push_active_{false};
+  uint32_t push_first_ms_{0}, push_last_ms_{0};
+  uint16_t push_lower_{0}, push_upper_{0}, push_blocks_{0};
+  bool resync_req_seen_{false}, testmode_seen_{false};
+  uint32_t last_resync_req_ms_{0}, last_testmode_ms_{0};
+  bool defrost_active_{false}, defrost_peak_valid_{false}, defrost_result_pending_{false};
+  uint32_t defrost_start_ms_{0}, defrost_result_due_ms_{0};
+  int16_t defrost_peak_2020_{0};
+  float last_defrost_s_{NAN};
   void stage_reg_write_(uint16_t reg, uint16_t raw, int shown, uint16_t flag_idx, uint16_t flag_value,
                         const char *label);
   void mark_pending_readback_(uint16_t reg, uint16_t value);
