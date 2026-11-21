@@ -1,5 +1,8 @@
-// thermia_gateway.cpp  v2026.10.20.5  ESP gateway-replacement component (impl)
+// thermia_gateway.cpp  v2026.11.21.1  ESP gateway-replacement component (impl)
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
+#include <string>
 #include "thermia_gateway.h"
 #include "registers_json_handler.h"
 #include "esphome/core/log.h"
@@ -13,6 +16,50 @@ static const char *const TAG = "thermia_gateway";
 static const char *const TAG_DUMP = "thermia_dump";
 static const char *const TAG_UNMAPPED = "thermia_unmapped";
 static const char *const TAG_AUDIT = "thermia_audit";
+
+// ---------------------------------------------------------------------------------------
+// Local replacements for helpers removed from ESPHome core (str_sprintf, format_hex,
+// format_hex_pretty). Declared in this namespace so unqualified calls below resolve here
+// first; this builds on both old and new ESPHome releases.
+// ---------------------------------------------------------------------------------------
+static std::string str_sprintf(const char *fmt, ...) {
+  char buf[256];
+  va_list args;
+  va_start(args, fmt);
+  int len = vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  if (len < 0) return {};
+  if ((size_t) len < sizeof(buf)) return std::string(buf, (size_t) len);
+  std::string out((size_t) len, '\0');
+  va_start(args, fmt);
+  vsnprintf(&out[0], (size_t) len + 1, fmt, args);
+  va_end(args);
+  return out;
+}
+
+static std::string format_hex(const uint8_t *d, size_t n) {
+  static const char H[] = "0123456789abcdef";
+  std::string s;
+  s.reserve(n * 2);
+  for (size_t i = 0; i < n; i++) {
+    s += H[d[i] >> 4];
+    s += H[d[i] & 0x0F];
+  }
+  return s;
+}
+
+static std::string format_hex_pretty(const uint8_t *d, size_t n) {
+  static const char H[] = "0123456789ABCDEF";
+  std::string s;
+  s.reserve(n * 3 + 8);
+  for (size_t i = 0; i < n; i++) {
+    if (i) s += '.';
+    s += H[d[i] >> 4];
+    s += H[d[i] & 0x0F];
+  }
+  if (n > 4) s += " (" + std::to_string(n) + ")";
+  return s;
+}
 
 using DumpKind = thermia::RegisterStore::DumpKind;
 
