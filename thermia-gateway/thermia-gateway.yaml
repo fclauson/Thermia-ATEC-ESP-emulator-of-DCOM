@@ -36,36 +36,52 @@ esphome:
   devices:
     - id: dev_heating
       name: "Heating & Curve"
+      relation: child
     - id: dev_heatpump
       name: "Heat Pump Control"
+      relation: child
     - id: dev_hotwater
       name: "Hot Water"
+      relation: child
     - id: dev_cooling
       name: "Cooling"
+      relation: child
     - id: dev_immersion
       name: "Immersion Heater"
+      relation: child
     - id: dev_calibration
       name: "Sensor Calibration"
+      relation: child
     - id: dev_temps
       name: "Temperatures"
+      relation: child
     - id: dev_runtime
       name: "Runtime Counters"
+      relation: child
     - id: dev_defrost
       name: "Defrosting"
+      relation: child
     - id: dev_diag
       name: "Operational Diagnostics"
+      relation: child
     - id: dev_opmode
       name: "Operation Mode & Status"
+      relation: child
     - id: dev_odu
       name: "Outdoor Unit (ODU)"
+      relation: child
     - id: dev_liveio
       name: "Pumps & Valves"   # live I/O frames; decodes need more testing (see HANDOFF §6)
+      relation: child
     - id: dev_alarms
       name: "Alarms"
+      relation: child
     - id: dev_shadow
       name: "Gateway Shadow & Handshake"
+      relation: child
     - id: dev_mailbox
       name: "Mailbox & Raw Registers"   # all diagnostic: mailbox, raw bit-words, numeric enum copies, unknowns
+      relation: child
 
 esp32:
   variant: esp32s3
