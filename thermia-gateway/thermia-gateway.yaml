@@ -95,8 +95,12 @@ logger:
 
 external_components:
   - source:
-      type: local
-      path: components
+      type: git
+      url: https://github.com/fclauson/Thermia-ATEC-ESP-emulator-of-DCOM
+      ref: main
+      path: thermia-gateway/components
+    components: [thermia_gateway]
+    refresh: 0s
 
 # Main RS485 port (Waveshare ESP32-S3-RS485-CAN screw terminals).
 uart:
